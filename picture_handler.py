@@ -2,7 +2,7 @@ import logging
 import re
 import filecmp
 from os import listdir, remove
-from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime
+from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime, basename
 from optparse import OptionParser
 from collections import defaultdict
 from shutil import move
@@ -13,7 +13,7 @@ from datetime import datetime
 import regex_patterns
 
 logger = None
-DateTimeOriginalKey = 36867
+DATE_TIME_ORIGINAL_KEY = 36867
 
 
 def main():
@@ -21,7 +21,10 @@ def main():
     parser = create_parser()
     options, args = parser.parse_args()
     logger.info('Handling started')
-    handler = PicturesHandler(options.src, options.dst, options.mode, options.dry_run)
+    handler = PicturesHandler(options.src, options.dst, options.mode,
+                              options.filter.replace(' ', '').split(' ') if options.filter else [],
+                              options.filter.replace(' ', '').strip('"').split('" "') if options.ignore else [],
+                              options.dry_run)
     handler.handle()
     handler.output()
     logger.info('Handling finished')
@@ -29,10 +32,14 @@ def main():
 
 def create_parser():
     parser = OptionParser()
-    parser.add_option("--src", dest="src", type="string", help="Folder to parse")
-    parser.add_option("--dst", dest="dst", type="string", help="Folder copy pictures to")
-    parser.add_option('--mode', dest='mode', type="string", help="Whether to handle phone or camera pictures")
-    parser.add_option('--dry-run', dest='dry_run', action='store_true')
+    parser.add_option("--src", '-s', dest="src", type="string", help="Folder to parse")
+    parser.add_option("--dst", '-d', dest="dst", type="string", help="Folder copy pictures to")
+    parser.add_option('--mode', '-m', dest='mode', type="string", help="Whether to handle phone or camera pictures")
+    parser.add_option('--filter', '-f', dest='filter', type="string",
+                      help="Methods for pictures fitering before copy separated by whitespace")
+    parser.add_option('--ignore', '-i', dest='ignore', type="string",
+                      help="Regexs surrounded by \" for pictures names to ignore separated by whitespace")
+    parser.add_option('--dry-run', '--dr', dest='dry_run', action='store_true')
     parser.set_defaults(dry_run=False)
     return parser
 
@@ -60,18 +67,19 @@ class Mode:
 
 
 class PicturesHandler:
-
-    def __init__(self, src, dst, mode=Mode.phone, dry_run=False):
+    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None, dry_run=False):
         if not src or not dst or not mode:
             raise ValueError('Manadatory parameter is missing')
 
         self.src = unicode(src)
         self.dst = unicode(dst)
         self.mode = mode
+        self.filters = get_filter()
         self.dry_run = dry_run
 
         if self.mode not in Mode.available_modes:
-            raise ValueError('Invalid mode passed {}. Expected one of the following'.format(self.moved, Mode.available_modes))
+            raise ValueError('Invalid mode passed {}. Expected one of the following {}'.format(
+                self.moved, Mode.available_modes))
 
         self.sizes_files = defaultdict(list)
         self.matched = defaultdict(list)
@@ -109,14 +117,16 @@ class PicturesHandler:
         #     for match in matches:
         #         counter += 1
         #         logger.info('{}Dest: {file} '.format('\t' if len(matches) > 1 else '', **match))
-        logger.info(u'*****Total {} formats found at destination directory {}'.format(len(self.destination_formats), self.dst))
-        logger.info(u'*****Total {} files found and matched at destination directory {}'.format(sum([len(val) for val in self.destination_formats.values()]), self.dst))
+        logger.info(u'*****Total {} formats found at destination directory {}'.format(
+            len(self.destination_formats), self.dst))
+        logger.info(u'*****Total {} files found and matched at destination directory {}'.format(
+            sum([len(val) for val in self.destination_formats.values()]), self.dst))
 
         logger.info(u'\n\n******Following files found but not matched at destination directory {}'.format(self.dst))
         for item in self.destination_not_matched:
             logger.info(u'Dest Not Matched. {}'.format(item))
-        logger.info('*****Total {} files found but not matched at destination directory'.format(len(self.destination_not_matched)))
-
+        logger.info('*****Total {} files found but not matched at destination directory '.format(
+            len(self.destination_not_matched)))
         logger.info('\n\n******Following files matched but was not added')
         for item in self.matched_not_added:
             logger.info(u'Not Added. {}'.format(item[1]))
@@ -129,7 +139,8 @@ class PicturesHandler:
                 logger.info(u'***Ready group: {}'.format(key))
             for match in matches:
                 counter += 1
-                logger.info(u'{}Ready File: {file}, New File Name: {new_file_name}'.format('\t' if len(matches) > 1 else '', **match))
+                logger.info(u'{}Ready File: {file}, New File Name: {new_file_name}'.format(
+                    '\t' if len(matches) > 1 else '', **match))
         logger.info('*****Total {} files ready to be added'.format(counter))
 
         if not self.dry_run:
@@ -165,8 +176,8 @@ class PicturesHandler:
     def _prepare_new_files_for_copy(self):
         def get_new_filename():
             return regex_patterns.NEW_FILE_FORMAT.format(
-                            regex_patterns.DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION.format(**match).replace(
-                                'None', '00'), suffix, **match)
+                regex_patterns.DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION.format(**match).replace(
+                    'None', '00'), suffix, **match)
 
         def get_new_suffix(file_props_list):
             return regex_patterns.NEW_SUFFIX_FORMAT.format(
@@ -186,7 +197,8 @@ class PicturesHandler:
                     # if match['size'] in [size[1] for size in sizes]:
                     #     filename, size = next(size for size in sizes if size[1] == match['size'])
                     #     self.matched_not_added.append((join(match['folder'], match['file']),
-                    #                                    'File {} has the same name and size {}'.format(filename, size)))
+                    #                                    'File {} has the same name and size {}'.format(
+                    # filename, size)))
                     #     continue
                 match['suffix'] = suffix
                 match['new_file_name'] = get_new_filename()
@@ -231,9 +243,9 @@ class PicturesHandler:
                     try:
                         img = Image.open(full_path)
                         if hasattr(img, '_getexif'):
-                            date_taken = img._getexif()[DateTimeOriginalKey]
+                            date_taken = img._getexif()[DATE_TIME_ORIGINAL_KEY]
                         elif hasattr(img, 'tag'):
-                            date_taken = img.tag._tagdata[DateTimeOriginalKey]
+                            date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
                         date_taken_dict = re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict()
                         properties.update(date_taken_dict)
                     except (KeyError, IOError) as e:
