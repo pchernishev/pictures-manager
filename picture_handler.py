@@ -2,8 +2,8 @@ import logging
 import re
 import filecmp
 from os import listdir, remove
-from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime, basename
-from optparse import OptionParser
+from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime
+from argparse import ArgumentParser
 from collections import defaultdict
 from shutil import move
 import json
@@ -11,6 +11,7 @@ from PIL import Image
 from datetime import datetime
 
 import regex_patterns
+import filtering
 
 logger = None
 DATE_TIME_ORIGINAL_KEY = 36867
@@ -19,28 +20,24 @@ DATE_TIME_ORIGINAL_KEY = 36867
 def main():
     init_logger()
     parser = create_parser()
-    options, args = parser.parse_args()
+    args = parser.parse_args()
     logger.info('Handling started')
-    handler = PicturesHandler(options.src, options.dst, options.mode,
-                              options.filter.replace(' ', '').split(' ') if options.filter else [],
-                              options.filter.replace(' ', '').strip('"').split('" "') if options.ignore else [],
-                              options.dry_run)
+    handler = PicturesHandler(args.src, args.dst, args.mode, args.filter, args.ignore, args.dry_run)
     handler.handle()
     handler.output()
     logger.info('Handling finished')
 
 
 def create_parser():
-    parser = OptionParser()
-    parser.add_option("--src", '-s', dest="src", type="string", help="Folder to parse")
-    parser.add_option("--dst", '-d', dest="dst", type="string", help="Folder copy pictures to")
-    parser.add_option('--mode', '-m', dest='mode', type="string", help="Whether to handle phone or camera pictures")
-    parser.add_option('--filter', '-f', dest='filter', type="string",
-                      help="Methods for pictures fitering before copy separated by whitespace")
-    parser.add_option('--ignore', '-i', dest='ignore', type="string",
-                      help="Regexs surrounded by \" for pictures names to ignore separated by whitespace")
-    parser.add_option('--dry-run', '--dr', dest='dry_run', action='store_true')
-    parser.set_defaults(dry_run=False)
+    parser = ArgumentParser(description="Pictures Handler parameters")
+    parser.add_argument("--src", '-s', dest="src", type=str, help="Folder to parse")
+    parser.add_argument("--dst", '-d', dest="dst", type=str, help="Folder copy pictures to")
+    parser.add_argument('--mode', '-m', dest='mode', type=str, help="Whether to handle phone or camera pictures")
+    parser.add_argument('--filter', '-f', dest='filter', type=str, nargs='+',
+                        help="Methods for pictures fitering before copy separated by whitespace")
+    parser.add_argument('--ignore', '-i', dest='ignore', type=str, nargs='+',
+                        help="Regexs surrounded by \" for pictures names to ignore separated by whitespace")
+    parser.add_argument('--dry-run', '--dr', dest='dry_run', action='store_true', default=False)
     return parser
 
 
@@ -67,14 +64,16 @@ class Mode:
 
 
 class PicturesHandler:
-    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None, dry_run=False):
+    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None, dry_run=False, db_path='files.txt'):
         if not src or not dst or not mode:
             raise ValueError('Manadatory parameter is missing')
 
         self.src = unicode(src)
         self.dst = unicode(dst)
         self.mode = mode
-        self.filters = get_filter()
+        self.filters = filtering.get_filter(filters)
+        self.ignore_regexs = ignore_regexs
+        self.db_path = 'files.txt'
         self.dry_run = dry_run
 
         if self.mode not in Mode.available_modes:
@@ -164,6 +163,7 @@ class PicturesHandler:
         self._prepare_new_files_for_copy()
         if not self.dry_run:
             self._move_prepared_files()
+            # self.update_db()
             self._delete_not_added()
 
     def _delete_not_added(self):

@@ -1,18 +1,5 @@
-
-def get_filter(filter_type):
-    ''' Filters factory method'''
-    ret_val = None
-    if isinstance(filter_type, list):
-        filters = []
-        for _type in filter_type:
-            filters.append(get_filter(_type))
-        ret_val = filter_initializers[CompositionFilter.name](filters)
-    else:
-        if filter_type not in available_filter_types:
-            raise ValueError('Incompatible filter type {}'.format(filter_type))
-        ret_val = filter_initializers[filter_type]()
-
-    return ret_val
+import filecmp
+from os.path import getsize, basename
 
 
 class Filter:
@@ -62,3 +49,19 @@ filter_initializers = {
     SizeFilter.name: SizeFilter,
     CompositionFilter.name: CompositionFilter
 }
+
+
+def get_filter(filter_type):
+    ''' Filters factory method'''
+    ret_val = None
+    if isinstance(filter_type, list):
+        filters = []
+        for _type in filter_type:
+            filters.append(get_filter(_type))
+        ret_val = filter_initializers[CompositionFilter.name](filters)
+    else:
+        if filter_type not in available_filter_types:
+            raise ValueError('Incompatible filter type {}'.format(filter_type))
+        ret_val = filter_initializers[filter_type]()
+
+    return ret_val
