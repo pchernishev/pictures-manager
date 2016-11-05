@@ -1,4 +1,3 @@
-import logging
 import re
 import filecmp
 from os import listdir, remove
@@ -10,15 +9,15 @@ import json
 from PIL import Image
 from datetime import datetime
 
+from logger import logger
 import regex_patterns
 import filtering
+import utils
 
-logger = None
 DATE_TIME_ORIGINAL_KEY = 36867
 
 
 def main():
-    init_logger()
     parser = create_parser()
     args = parser.parse_args()
     logger.info('Handling started')
@@ -41,21 +40,6 @@ def create_parser():
     return parser
 
 
-def init_logger():
-    logging.basicConfig(filename='logger.log', level=logging.DEBUG, format='%(asctime)s %(message)s',
-                        datefmt='%d/%m/%Y %H:%M:%S')
-    global logger
-    logger = logging.getLogger('logger')
-    # create console handler and set level to debug
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    # create formatter
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    # add formatter to ch
-    ch.setFormatter(formatter)
-    # add ch to logger
-    logger.addHandler(ch)
-
 
 class Mode:
     camera = 'camera'
@@ -73,13 +57,15 @@ class PicturesHandler:
         self.mode = mode
         self.filters = filtering.get_filter(filters)
         self.ignore_regexs = ignore_regexs
-        self.db_path = 'files.txt'
+        self.db_path = db_path
         self.dry_run = dry_run
 
         if self.mode not in Mode.available_modes:
             raise ValueError('Invalid mode passed {}. Expected one of the following {}'.format(
-                self.moved, Mode.available_modes))
+                self.mode, Mode.available_modes))
 
+        self.db_files = {}
+        self.all_handled_names = []
         self.sizes_files = defaultdict(list)
         self.matched = defaultdict(list)
         self.unmatched = []
@@ -158,13 +144,18 @@ class PicturesHandler:
             logger.info('*****Total {} files wern\'t deleted'.format(len(self.not_deleted)))
 
     def handle(self):
-        self._handle_destination_folder()
+        self._load_db()
+        self._handle_destination_folder(self.dst)
         self._handle_source_folder(self.src)
         self._prepare_new_files_for_copy()
         if not self.dry_run:
             self._move_prepared_files()
             # self.update_db()
             self._delete_not_added()
+
+    def _load_db(self):
+        self.db_files = utils.load_db_files(self.dst)
+        self.all_handled_names = self.db_files.keys() + self.db_files.values()
 
     def _delete_not_added(self):
         for f in self.matched_not_added:
@@ -204,82 +195,89 @@ class PicturesHandler:
                 match['new_file_name'] = get_new_filename()
                 self.ready_to_add[file_format].append(match)
 
-    def _handle_destination_folder(self):
-        files = [f for f in listdir(self.dst) if isfile(join(self.dst, f))]
-        for _f in files:
-            match = re.match(regex_patterns.DESTINATION_REGEX, _f)
-            if not match:
-                self.destination_not_matched.append(_f)
-                continue
-            properties = match.groupdict()
-            properties['folder'] = self.dst
-            full_path = join(self.dst, _f)
-            size = getsize(full_path)
-            properties['size'] = size
-            properties['file'] = _f
+    def _handle_single_file(self, file, match, folder):
+        properties = match.groupdict()
+        full_path = join(folder, file)
+        properties['folder'] = folder
+        size = getsize(full_path)
+        properties['size'] = size
+        properties['file'] = file
+        properties['fullpath'] = full_path
+        return properties
 
+    def _handle_destination_folder(self, folder, recursive=True):
+        if recursive:
+            dirs = [join(folder, d) for d in listdir(folder) if isdir(join(folder, d)) and
+                    join(folder, d).lower() != self.src.lower()]
+            for d in dirs:
+                self._handle_destination_folder(d)
+        files = [f for f in listdir(folder) if isfile(join(folder, f))]
+        for f in files:
+            match = re.match(regex_patterns.DESTINATION_REGEX, f)
+            if not match:
+                self.destination_not_matched.append(f)
+                continue
+            properties = self._handle_single_file(f, match, folder)
             # Create key with no suffix
             key = regex_patterns.DESTINATION_FORMAT_NO_SUFFIX.format(**properties)
             self.destination_formats[key].append(properties)
-            self.sizes_files[size].append(full_path)
+            self.sizes_files[properties['size']].append(properties['fullpath'])
 
     def _handle_source_folder(self, folder, recursive=True):
         if recursive:
             dirs = [join(folder, d) for d in listdir(folder) if isdir(join(folder, d)) and
-                    join(folder, d).lower() != self.dst.lower]
+                    join(folder, d).lower() != self.dst.lower()]
             for d in dirs:
                 self._handle_source_folder(d)
-        files = [_f for _f in listdir(folder) if isfile(join(folder, _f))]
+        files = [f for f in listdir(folder) if isfile(join(folder, f))]
         for f in files:
             match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT[self.mode], f)
-            if match:
-                full_path = (join(folder, f))
-                properties = match.groupdict()
-                properties['folder'] = folder
-                size = getsize(full_path)
-                properties['size'] = size
-                properties['file'] = f
-                if self.mode == Mode.camera:
-                    try:
-                        img = Image.open(full_path)
-                        if hasattr(img, '_getexif'):
-                            date_taken = img._getexif()[DATE_TIME_ORIGINAL_KEY]
-                        elif hasattr(img, 'tag'):
-                            date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
-                        date_taken_dict = re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict()
-                        properties.update(date_taken_dict)
-                    except (KeyError, IOError) as e:
-                        if isinstance(e, IOError) and 'cannot identify image file' not in e.message \
-                                or isinstance(e, KeyError) and e.message != 36867:
-                            raise
-                        min_date = min([getatime(full_path), getmtime(full_path), getctime(full_path)])
-                        dt = datetime.fromtimestamp(min_date)
+            if not match:
+                self.unmatched.append(join(folder, f))
+                continue
 
-                        def format_func(num):
-                            return '{:0=2d}'.format(num)
-                        update_dict = {
-                            'year': str(dt.year), 'month': format_func(dt.month),
-                            'day': format_func(dt.day), 'hour': format_func(dt.hour),
-                            'minute': format_func(dt.minute), 'second': format_func(dt.second)
-                        }
-                        properties.update(update_dict)
-                    except Exception as e:
-                        logger.info('Error {}'.format(_f))
+            properties = self._handle_single_file(f)
+            full_path = properties['fullpath']
+            size = properties['size']
+            if self.mode == Mode.camera:
+                try:
+                    img = Image.open(full_path)
+                    if hasattr(img, '_getexif'):
+                        date_taken = img._getexif()[DATE_TIME_ORIGINAL_KEY]
+                    elif hasattr(img, 'tag'):
+                        date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
+                    date_taken_dict = re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict()
+                    properties.update(date_taken_dict)
+                except (KeyError, IOError) as e:
+                    if isinstance(e, IOError) and 'cannot identify image file' not in e.message \
+                            or isinstance(e, KeyError) and e.message != 36867:
+                        raise
+                    min_date = min([getatime(full_path), getmtime(full_path), getctime(full_path)])
+                    dt = datetime.fromtimestamp(min_date)
 
-                if size not in self.sizes_files:
+                    def format_func(num):
+                        return '{:0=2d}'.format(num)
+                    update_dict = {
+                        'year': str(dt.year), 'month': format_func(dt.month),
+                        'day': format_func(dt.day), 'hour': format_func(dt.hour),
+                        'minute': format_func(dt.minute), 'second': format_func(dt.second)
+                    }
+                    properties.update(update_dict)
+                except Exception as e:
+                    logger.info('Error {}'.format(f))
+
+            if size not in self.sizes_files:
+                self.matched[f].append(properties)
+                self.sizes_files[size].append(full_path)
+            else:
+                for _f in self.sizes_files[size]:
+                    if filecmp.cmp(_f, full_path, shallow=False):
+                        self.matched_not_added.append((full_path, u'{} same as {} and {} size {}'.format(
+                            full_path, _f, len(self.sizes_files[size][1:]), size)))
+                        break
+                else:
                     self.matched[f].append(properties)
                     self.sizes_files[size].append(full_path)
-                else:
-                    for _f in self.sizes_files[size]:
-                        if filecmp.cmp(_f, full_path, shallow=False):
-                            self.matched_not_added.append((full_path, u'{} same as {} and {} size {}'.format(
-                                full_path, _f, len(self.sizes_files[size][1:]), size)))
-                            break
-                    else:
-                        self.matched[f].append(properties)
-                        self.sizes_files[size].append(full_path)
-            else:
-                self.unmatched.append(join(folder, f))
 
     def _move_prepared_files(self):
         for fg, files in self.ready_to_add.iteritems():
