@@ -1,7 +1,7 @@
 import re
 import filecmp
 from os import listdir, remove
-from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime
+from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime, basename
 from argparse import ArgumentParser
 from collections import defaultdict
 from shutil import move
@@ -21,7 +21,7 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     logger.info('Handling started')
-    handler = PicturesHandler(args.src, args.dst, args.mode, args.filter, args.ignore, args.dry_run)
+    handler = PicturesHandler(args.src, args.dst, args.mode, args.filter, args.ignore, args.dry_run, args.recursive)
     handler.handle()
     handler.output()
     logger.info('Handling finished')
@@ -33,12 +33,12 @@ def create_parser():
     parser.add_argument("--dst", '-d', dest="dst", type=str, help="Folder copy pictures to")
     parser.add_argument('--mode', '-m', dest='mode', type=str, help="Whether to handle phone or camera pictures")
     parser.add_argument('--filter', '-f', dest='filter', type=str, nargs='+',
-                        help="Methods for pictures fitering before copy separated by whitespace")
+                        help="Methods for pictures fitering before copy, separated by whitespace")
     parser.add_argument('--ignore', '-i', dest='ignore', type=str, nargs='+',
-                        help="Regexs surrounded by \" for pictures names to ignore separated by whitespace")
+                        help="Regexs surrounded by \" for pictures names to ignore, separated by whitespace")
+    parser.add_argument('--not-recursive', '--nr', dest='recursive', action='store_true', default=True)
     parser.add_argument('--dry-run', '--dr', dest='dry_run', action='store_true', default=False)
     return parser
-
 
 
 class Mode:
@@ -48,28 +48,34 @@ class Mode:
 
 
 class PicturesHandler:
-    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None, dry_run=False, db_path='files.txt'):
+    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None, dry_run=False, recursive=True,
+                 db_path='files.txt'):
         if not src or not dst or not mode:
-            raise ValueError('Manadatory parameter is missing')
+            raise ValueError('Manadatory parameter src or dst is missing')
+        if mode not in Mode.available_modes:
+            raise ValueError('Invalid mode passed {}. Expected one of the following {}'.format(
+                self.mode, Mode.available_modes))
+        invalid_filters = set(filters) - set(filtering.available_filter_types)
+        if invalid_filters:
+            raise ValueError('Invalid filters passed {}. Expected one of the following {}'.format(
+                invalid_filters, filtering.available_filter_types))
 
         self.src = unicode(src)
         self.dst = unicode(dst)
         self.mode = mode
-        self.filters = filtering.get_filter(filters)
-        self.ignore_regexs = ignore_regexs
+        self.filter = filtering.get_filter(filters)
+        self.ignore_regexs = [re.compile(r'{}'.format(regex)) for regex in ignore_regexs]
         self.db_path = db_path
+        self.recursive = recursive
         self.dry_run = dry_run
-
-        if self.mode not in Mode.available_modes:
-            raise ValueError('Invalid mode passed {}. Expected one of the following {}'.format(
-                self.mode, Mode.available_modes))
 
         self.db_files = {}
         self.all_handled_names = []
+        self.ignored = []
         self.sizes_files = defaultdict(list)
         self.matched = defaultdict(list)
         self.unmatched = []
-        self.matched_not_added = []
+        self.not_passed_filters = []
         self.destination_formats = defaultdict(list)
         self.destination_not_matched = []
         self.ready_to_add = defaultdict(list)
@@ -95,7 +101,7 @@ class PicturesHandler:
         logger.info('*****Total {} files matched'.format(counter))
 
         logger.info(u'\n\n*****Following files were found at destination directory {}'.format(self.dst))
-        counter = 0
+        # counter = 0
         # for key, matches in self.destination_files.iteritems():
         #     if len(matches) > 1:
         #         logger.info('***Dest group: {}'.format(key))
@@ -112,10 +118,10 @@ class PicturesHandler:
             logger.info(u'Dest Not Matched. {}'.format(item))
         logger.info('*****Total {} files found but not matched at destination directory '.format(
             len(self.destination_not_matched)))
-        logger.info('\n\n******Following files matched but was not added')
-        for item in self.matched_not_added:
+        logger.info('\n\n******Following files matched but not pass filters')
+        for item in self.not_passed_filters:
             logger.info(u'Not Added. {}'.format(item[1]))
-        logger.info('*****Total {} files matched but not added '.format(len(self.matched_not_added)))
+        logger.info('*****Total {} files matched but not added '.format(len(self.not_passed_filters)))
 
         logger.info('\n\n*****Following files are ready to be added')
         counter = 0
@@ -127,6 +133,11 @@ class PicturesHandler:
                 logger.info(u'{}Ready File: {file}, New File Name: {new_file_name}'.format(
                     '\t' if len(matches) > 1 else '', **match))
         logger.info('*****Total {} files ready to be added'.format(counter))
+
+        logger.info('\n\n*****Following files were ignored')
+        for item in self.ignored:
+            logger.info(u'{}'.format(item))
+        logger.info('*****Total {} files were ignored'.format(len(self.ignored)))
 
         if not self.dry_run:
             logger.info('\n\n*****Following files failed to be moved')
@@ -146,7 +157,7 @@ class PicturesHandler:
     def handle(self):
         self._load_db()
         self._handle_destination_folder(self.dst)
-        self._handle_source_folder(self.src)
+        self._handle_source_folder(self.src, self.recursive)
         self._prepare_new_files_for_copy()
         if not self.dry_run:
             self._move_prepared_files()
@@ -155,10 +166,11 @@ class PicturesHandler:
 
     def _load_db(self):
         self.db_files = utils.load_db_files(self.dst)
-        self.all_handled_names = self.db_files.keys() + self.db_files.values()
+        for src, dst in self.db_files.iteritems():
+            self.all_handled_names += [basename(src), basename(dst)]
 
     def _delete_not_added(self):
-        for f in self.matched_not_added:
+        for f in self.not_passed_filters:
             try:
                 remove(f[0])
             except Exception, e:
@@ -187,7 +199,7 @@ class PicturesHandler:
                     #          in self.ready_to_add[file_format] + self.destination_files[file_format]]
                     # if match['size'] in [size[1] for size in sizes]:
                     #     filename, size = next(size for size in sizes if size[1] == match['size'])
-                    #     self.matched_not_added.append((join(match['folder'], match['file']),
+                    #     self.not_passed_filters.append((join(match['folder'], match['file']),
                     #                                    'File {} has the same name and size {}'.format(
                     # filename, size)))
                     #     continue
@@ -223,20 +235,24 @@ class PicturesHandler:
             self.destination_formats[key].append(properties)
             self.sizes_files[properties['size']].append(properties['fullpath'])
 
-    def _handle_source_folder(self, folder, recursive=True):
+    def _handle_source_folder(self, folder, recursive):
         if recursive:
             dirs = [join(folder, d) for d in listdir(folder) if isdir(join(folder, d)) and
                     join(folder, d).lower() != self.dst.lower()]
             for d in dirs:
-                self._handle_source_folder(d)
+                self._handle_source_folder(d, recursive)
         files = [f for f in listdir(folder) if isfile(join(folder, f))]
         for f in files:
+            if any(regex.match(f) for regex in self.ignore_regexs):
+                self.ignored.append('{}. Folder: {}'.format(f, folder))
+                continue
+
             match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT[self.mode], f)
             if not match:
                 self.unmatched.append(join(folder, f))
                 continue
 
-            properties = self._handle_single_file(f)
+            properties = self._handle_single_file(f, match, folder)
             full_path = properties['fullpath']
             size = properties['size']
             if self.mode == Mode.camera:
@@ -266,18 +282,29 @@ class PicturesHandler:
                 except Exception as e:
                     logger.info('Error {}'.format(f))
 
-            if size not in self.sizes_files:
+            filters = [_filter.name for _filter in self.filter.filters]
+            passed_filter = True
+            errors = []
+            # Name Filets
+            if filtering.NameFilter.name in filters:
+                if f in self.all_handled_names:
+                    errors.append(u'NAME: {}'.format(f))
+                    passed_filter = False
+
+            # Size Filter
+            if passed_filter and filtering.BinaryFilter.name in filters:
+                if size in self.sizes_files:
+                    for _f in self.sizes_files[size]:
+                        if filecmp.cmp(_f, full_path, shallow=False):
+                            errors.append(u'BINARY: {} same as {} {}'.format(full_path, _f, size))
+                            passed_filter = False
+                            break
+
+            if passed_filter:
                 self.matched[f].append(properties)
                 self.sizes_files[size].append(full_path)
             else:
-                for _f in self.sizes_files[size]:
-                    if filecmp.cmp(_f, full_path, shallow=False):
-                        self.matched_not_added.append((full_path, u'{} same as {} and {} size {}'.format(
-                            full_path, _f, len(self.sizes_files[size][1:]), size)))
-                        break
-                else:
-                    self.matched[f].append(properties)
-                    self.sizes_files[size].append(full_path)
+                self.not_passed_filters.append((full_path, '; '.join(errors)))
 
     def _move_prepared_files(self):
         for fg, files in self.ready_to_add.iteritems():

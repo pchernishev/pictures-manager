@@ -42,7 +42,7 @@ class CompositionFilter(Filter):
                 return False
         return True
 
-available_filter_types = [BinaryFilter.name, NameFilter.name, SizeFilter.name]
+available_filter_types = [BinaryFilter.name, NameFilter.name, SizeFilter.name, CompositionFilter.name]
 filter_initializers = {
     BinaryFilter.name: BinaryFilter,
     NameFilter.name: NameFilter,
