@@ -48,8 +48,8 @@ class Mode:
 
 
 class PicturesHandler:
-    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None, dry_run=False, recursive=True,
-                 db_path='files.txt'):
+    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None,
+                 dry_run=False, recursive=True, db_path='files.txt'):
         if not src or not dst or not mode:
             raise ValueError('Manadatory parameter src or dst is missing')
         if mode not in Mode.available_modes:
@@ -64,10 +64,10 @@ class PicturesHandler:
         self.dst = unicode(dst)
         self.mode = mode
         self.filter = filtering.get_filter(filters)
-        self.ignore_regexs = [re.compile(r'{}'.format(regex)) for regex in ignore_regexs]
         self.db_path = db_path
         self.recursive = recursive
         self.dry_run = dry_run
+        self.ignore_regexs = [re.compile(r'{}'.format(regex)) for regex in ignore_regexs] if ignore_regexs else []
 
         self.db_files = {}
         self.all_handled_names = []

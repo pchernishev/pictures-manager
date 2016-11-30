@@ -8,7 +8,7 @@ REGEX_PARTS = {
         'time': '((?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})' +
                 DELIMITER + '(?P<millisecond>\d{3})?)?',
         'prefix': '(?P<prefix>IMG|VID|Screenshot|C360|MPC|DSC|RKP|MVI)',
-        'suffix': '(?P<suffix>\d{1,4}|\(\d\)|HDR|Burst\d{2}|WA\d{{4}})',
+        'suffix': '(?P<suffix>\d{1,4}|\(\d\)|HDR|Burst\d{2}|WA\d{4})',
         'delimiter': DELIMITER,
     }
 DATE_TAKEN_REGEX = '(?P<year>20[0-1]\d):(?P<month>[0-1]\d):(?P<day>[0-3]\d)[ ]' \
