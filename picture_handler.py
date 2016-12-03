@@ -1,13 +1,14 @@
 import re
 import filecmp
-from os import listdir, remove
-from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime, basename
+from os import listdir, remove, mkdir
+from os.path import isfile, join, isdir, getsize, exists, getmtime, getctime, getatime, basename, splitext
 from argparse import ArgumentParser
 from collections import defaultdict
 from shutil import move
 import json
 from PIL import Image
 from datetime import datetime
+import imghdr
 
 from logger import logger
 import regex_patterns
@@ -21,17 +22,16 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     logger.info('Handling started')
-    handler = PicturesHandler(args.src, args.dst, args.mode, args.filter, args.ignore, args.dry_run, args.recursive)
+    handler = PicturesHandler(args.src, args.dst, args.filter, args.ignore, args.dry_run, args.recursive)
     handler.handle()
     handler.output()
-    logger.info('Handling finished')
+    logger.info('Handling finished\n')
 
 
 def create_parser():
     parser = ArgumentParser(description="Pictures Handler parameters")
     parser.add_argument("--src", '-s', dest="src", type=str, help="Folder to parse")
     parser.add_argument("--dst", '-d', dest="dst", type=str, help="Folder copy pictures to")
-    parser.add_argument('--mode', '-m', dest='mode', type=str, help="Whether to handle phone or camera pictures")
     parser.add_argument('--filter', '-f', dest='filter', type=str, nargs='+',
                         help="Methods for pictures fitering before copy, separated by whitespace")
     parser.add_argument('--ignore', '-i', dest='ignore', type=str, nargs='+',
@@ -41,29 +41,20 @@ def create_parser():
     return parser
 
 
-class Mode:
-    camera = 'camera'
-    phone = 'phone'
-    available_modes = [camera, phone]
-
-
 class PicturesHandler:
-    def __init__(self, src, dst, mode=Mode.phone, filters=None, ignore_regexs=None,
+    def __init__(self, src, dst, filters=None, ignore_regexs=None,
                  dry_run=False, recursive=True, db_path='files.txt'):
-        if not src or not dst or not mode:
-            raise ValueError('Manadatory parameter src or dst is missing')
-        if mode not in Mode.available_modes:
-            raise ValueError('Invalid mode passed {}. Expected one of the following {}'.format(
-                self.mode, Mode.available_modes))
-        invalid_filters = set(filters) - set(filtering.available_filter_types)
-        if invalid_filters:
-            raise ValueError('Invalid filters passed {}. Expected one of the following {}'.format(
-                invalid_filters, filtering.available_filter_types))
+        if not src or not dst:
+            raise ValueError('Manadatory parameter source folder or destination folder is missing')
+        if filters:
+            invalid_filters = set(filters) - set(filtering.available_filter_types)
+            if invalid_filters:
+                raise ValueError('Invalid filters passed {}. Expected no filters or one of the following {}'.format(
+                    invalid_filters, filtering.available_filter_types))
+            self.filter = filtering.get_filter(filters)
 
         self.src = unicode(src)
         self.dst = unicode(dst)
-        self.mode = mode
-        self.filter = filtering.get_filter(filters)
         self.db_path = db_path
         self.recursive = recursive
         self.dry_run = dry_run
@@ -83,6 +74,7 @@ class PicturesHandler:
         self.moved = {}
         self.unmoved = {}
         self.not_deleted = []
+        self.min_date_taken = []
 
     def output(self):
         logger.info('\n\n*****Following files wern\'t matched')
@@ -139,6 +131,11 @@ class PicturesHandler:
             logger.info(u'{}'.format(item))
         logger.info('*****Total {} files were ignored'.format(len(self.ignored)))
 
+        logger.info('\n\n*****Following files new name created by taken min date')
+        for name, props in self.min_date_taken:
+            logger.info(u'{}. Props{}'.format(name, props))
+        logger.info('*****Total {} files new name created by taken min date'.format(len(self.min_date_taken)))
+
         if not self.dry_run:
             logger.info('\n\n*****Following files failed to be moved')
             for item, reason in self.unmoved.iteritems():
@@ -161,7 +158,7 @@ class PicturesHandler:
         self._prepare_new_files_for_copy()
         if not self.dry_run:
             self._move_prepared_files()
-            # self.update_db()
+            self._update_db()
             self._delete_not_added()
 
     def _load_db(self):
@@ -175,6 +172,10 @@ class PicturesHandler:
                 remove(f[0])
             except Exception, e:
                 self.not_deleted.append((f[0], 'Error {} {}'.format(e.__class__.__name__, e.message)))
+
+    def _update_db(self):
+        self.db_files.update(self.moved)
+        utils.save_db_files(self.db_files, self.dst, 'files_1.txt')
 
     def _prepare_new_files_for_copy(self):
         def get_new_filename():
@@ -207,17 +208,21 @@ class PicturesHandler:
                 match['new_file_name'] = get_new_filename()
                 self.ready_to_add[file_format].append(match)
 
-    def _handle_single_file(self, file, match, folder):
-        properties = match.groupdict()
+    def _update_common_file_props(self, file, folder):
+        properties = {}
         full_path = join(folder, file)
-        properties['folder'] = folder
         size = getsize(full_path)
+        properties['fullpath'] = full_path
+        properties['folder'] = folder
         properties['size'] = size
         properties['file'] = file
-        properties['fullpath'] = full_path
+        properties['extension'] = splitext(full_path)[1].lstrip('.')
         return properties
 
     def _handle_destination_folder(self, folder, recursive=True):
+        if not exists(folder):
+            mkdir(folder)
+
         if recursive:
             dirs = [join(folder, d) for d in listdir(folder) if isdir(join(folder, d)) and
                     join(folder, d).lower() != self.src.lower()]
@@ -229,7 +234,8 @@ class PicturesHandler:
             if not match:
                 self.destination_not_matched.append(f)
                 continue
-            properties = self._handle_single_file(f, match, folder)
+            properties = self._update_common_file_props(f, folder)
+            properties.update(match.groupdict())
             # Create key with no suffix
             key = regex_patterns.DESTINATION_FORMAT_NO_SUFFIX.format(**properties)
             self.destination_formats[key].append(properties)
@@ -244,30 +250,41 @@ class PicturesHandler:
         files = [f for f in listdir(folder) if isfile(join(folder, f))]
         for f in files:
             if any(regex.match(f) for regex in self.ignore_regexs):
-                self.ignored.append('{}. Folder: {}'.format(f, folder))
+                self.ignored.append(u'{}. Folder: {}'.format(f, folder))
                 continue
 
-            match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT[self.mode], f)
+            match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT, f)
             if not match:
                 self.unmatched.append(join(folder, f))
                 continue
 
-            properties = self._handle_single_file(f, match, folder)
+            properties = self._update_common_file_props(f, folder)
             full_path = properties['fullpath']
             size = properties['size']
-            if self.mode == Mode.camera:
-                try:
-                    img = Image.open(full_path)
-                    if hasattr(img, '_getexif'):
-                        date_taken = img._getexif()[DATE_TIME_ORIGINAL_KEY]
-                    elif hasattr(img, 'tag'):
-                        date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
-                    date_taken_dict = re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict()
-                    properties.update(date_taken_dict)
-                except (KeyError, IOError) as e:
-                    if isinstance(e, IOError) and 'cannot identify image file' not in e.message \
-                            or isinstance(e, KeyError) and e.message != 36867:
-                        raise
+            logger.info('TYPE {}. File {}'.format(imghdr.what(full_path), f))
+            try:
+                date_taken = None
+                img = Image.open(full_path)
+                if hasattr(img, '_getexif'):
+                    _getexif = img._getexif()
+                    if _getexif and DATE_TIME_ORIGINAL_KEY in _getexif:
+                        date_taken = _getexif[DATE_TIME_ORIGINAL_KEY]
+                if not date_taken and hasattr(img, 'tag'):
+                    logger.info('tag exists {}'.format(f))
+                    date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
+                if date_taken:
+                    properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
+            except (KeyError, IOError) as e:
+                logger.error(u'KeyError, IOError {}. Reason: {}'.format(f, e.message))
+                if isinstance(e, IOError) and 'cannot identify image file' not in e.message \
+                        or isinstance(e, KeyError) and e.message != DATE_TIME_ORIGINAL_KEY:
+                    raise
+            except Exception as e:
+                logger.error(u'Exception {}. Reason: {}'.format(f, e.message))
+
+            if not date_taken:
+                properties.update(match.groupdict())
+                if not all(properties.get(key, None) for key in ['year', 'month', 'day']):
                     min_date = min([getatime(full_path), getmtime(full_path), getctime(full_path)])
                     dt = datetime.fromtimestamp(min_date)
 
@@ -279,8 +296,7 @@ class PicturesHandler:
                         'minute': format_func(dt.minute), 'second': format_func(dt.second)
                     }
                     properties.update(update_dict)
-                except Exception as e:
-                    logger.info('Error {}'.format(f))
+                    self.min_date_taken.append((f, update_dict))
 
             filters = [_filter.name for _filter in self.filter.filters]
             passed_filter = True

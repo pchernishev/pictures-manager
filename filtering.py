@@ -2,8 +2,11 @@ import filecmp
 from os.path import getsize, basename
 
 
-class Filter:
+class Filter(object):
     name = ''
+
+    def initialize(self, dest_files):
+        self.destination_files = dest_files
 
     def pass_filter(self, file1, file2):
         raise NotImplementedError()
@@ -12,12 +15,18 @@ class Filter:
 class BinaryFilter(Filter):
     name = 'binary'
 
+    def initialize(self):
+        raise NotImplementedError()
+
     def pass_filter(self, file_path1, file_path2):
         return not filecmp.cmp(file_path1, file_path2, shallow=False)
 
 
 class NameFilter(Filter):
     name = 'name'
+
+    def initialize(self):
+        raise NotImplementedError()
 
     def pass_filter(self, file_path1, file_path2):
         return basename(file_path1) != basename(file_path2)
@@ -26,6 +35,9 @@ class NameFilter(Filter):
 class SizeFilter(Filter):
     name = 'size'
 
+    def initialize(self):
+        raise NotImplementedError()
+
     def pass_filter(self, file_path1, file_path2):
         return getsize(file_path1) != getsize(file_path2)
 
@@ -33,8 +45,13 @@ class SizeFilter(Filter):
 class CompositionFilter(Filter):
     name = 'multiple'
 
-    def __init__(self, filters=None):
+    def __init__(self, filters):
+        # super(CompositionFilter, self).__init__(dest_files)
         self.filters = filters
+
+    def initialize(self):
+        for _filter in self.filters:
+            _filter.initialize()
 
     def pass_filter(self, file_path1, file_path2):
         for _filter in self.filters:

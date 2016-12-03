@@ -11,7 +11,9 @@ DB_NAME = 'files.txt'
 
 def load_db_files(folder, db_name=DB_NAME):
     db_path = os.path.join(folder, db_name)
-    files_in_db = None
+    if not os.path.exists(db_path):
+        return {}
+
     with open(db_path, 'r') as f:
         files_in_db = json.load(f)
     return files_in_db
