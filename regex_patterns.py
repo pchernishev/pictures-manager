@@ -14,8 +14,9 @@ REGEX_PARTS = {
     }
 DATE_TAKEN_REGEX = '(?P<year>20[0-1]\d):(?P<month>[0-1]\d):(?P<day>[0-3]\d)[ ]' \
                    '(?P<hour>[0-2]\d):(?P<minute>\d{2}):(?P<second>\d{2})'
-ACCEPTABLE_REGEX_DICT = '^{prefix}?{delimiter}{date}?{delimiter}{time}?{delimiter}{suffix}?{extension}$'.format(
-    **REGEX_PARTS)
+ACCEPTABLE_REGEX_DICT = '^{prefix}?{delimiter}{date}{delimiter}{time}?{delimiter}{suffix}?{extension}$'.format(
+    **REGEX_PARTS
+)
 # '^{prefix}{delimiter}{suffix}{extension}$'.format(**REGEX_PARTS),
 DESTINATION_REGEX = '^{date}_{time_no_milli}_{suffix}{extension}'.format(**REGEX_PARTS)
 DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION = '{year}{month}{day}_{hour}{minute}{second}'

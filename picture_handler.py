@@ -65,6 +65,7 @@ class PicturesHandler:
         self.ignored = []
         self.sizes_files = defaultdict(list)
         self.matched = defaultdict(list)
+        self.matched_regex = []
         self.unmatched = []
         self.not_passed_filters = []
         self.destination_formats = defaultdict(list)
@@ -75,6 +76,7 @@ class PicturesHandler:
         self.unmoved = {}
         self.not_deleted = []
         self.min_date_taken = []
+        self.unsupported = []
 
     def output(self):
         logger.info('\n\n*****Following files wern\'t matched')
@@ -110,10 +112,16 @@ class PicturesHandler:
             logger.info(u'Dest Not Matched. {}'.format(item))
         logger.info('*****Total {} files found but not matched at destination directory '.format(
             len(self.destination_not_matched)))
+
         logger.info('\n\n******Following files matched but not pass filters')
         for item in self.not_passed_filters:
-            logger.info(u'Not Added. {}'.format(item[1]))
-        logger.info('*****Total {} files matched but not added '.format(len(self.not_passed_filters)))
+            logger.info(u'Not passed filter {}'.format(item[1]))
+        logger.info('*****Total {} files matched not pass filters'.format(len(self.not_passed_filters)))
+
+        logger.info('\n\n******Following files matched regex')
+        for item in self.matched_regex:
+            logger.info(u'{}'.format(item))
+        logger.info('*****Total {} files matched regex'.format(len(self.matched_regex)))
 
         logger.info('\n\n*****Following files are ready to be added')
         counter = 0
@@ -136,20 +144,25 @@ class PicturesHandler:
             logger.info(u'{}. Props{}'.format(name, props))
         logger.info('*****Total {} files new name created by taken min date'.format(len(self.min_date_taken)))
 
+        logger.info('\n\n*****Following files are of unsupported type')
+        for item in self.unsupported:
+            logger.info(u'{}'.format(item))
+        logger.info('*****Total {} files are of unsupported type'.format(len(self.unsupported)))
+
         if not self.dry_run:
             logger.info('\n\n*****Following files failed to be moved')
             for item, reason in self.unmoved.iteritems():
                 logger.info(u'Unmoved. {}. {}'.format(item, reason))
             logger.info('*****Total {} files failed to be moved'.format(len(self.unmoved)))
 
-            logger.info('******Moved files dict')
-            logger.info(json.dumps(self.moved, indent=4))
-            logger.info(u'*****Total {} files were moved to {}'.format(len(self.moved), self.dst))
-
             logger.info('\n\n*****Following files failed to be deleted')
             for f in self.not_deleted:
                 logger.info(u'Not deleted {}. Reason: {}'.format(f[0], f[1]))
             logger.info('*****Total {} files wern\'t deleted'.format(len(self.not_deleted)))
+
+            logger.info('******Moved files dict')
+            logger.info(json.dumps(self.moved, indent=4))
+            logger.info(u'*****Total {} files were moved to {}'.format(len(self.moved), self.dst))
 
     def handle(self):
         self._load_db()
@@ -187,8 +200,8 @@ class PicturesHandler:
             return regex_patterns.NEW_SUFFIX_FORMAT.format(
                 max([int(props['suffix']) for props in file_props_list]) + 1)
 
-        for key, matches in self.matched.iteritems():
-            for match in matches:
+        for key, matched in self.matched.iteritems():
+            for match in matched:
                 file_format = regex_patterns.DESTINATION_FORMAT_NO_SUFFIX.format(**match).replace('None', '00')
                 if file_format not in self.destination_formats.keys() + self.ready_to_add.keys():
                     suffix = '000'
@@ -253,38 +266,44 @@ class PicturesHandler:
                 self.ignored.append(u'{}. Folder: {}'.format(f, folder))
                 continue
 
-            match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT, f)
-            if not match:
-                self.unmatched.append(join(folder, f))
-                continue
+            # match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT, f)
+            # if not match:
+            #     self.unmatched.append(join(folder, f))
+            #     continue
 
             properties = self._update_common_file_props(f, folder)
             full_path = properties['fullpath']
             size = properties['size']
-            logger.info('TYPE {}. File {}'.format(imghdr.what(full_path), f))
-            try:
-                date_taken = None
-                img = Image.open(full_path)
-                if hasattr(img, '_getexif'):
-                    _getexif = img._getexif()
-                    if _getexif and DATE_TIME_ORIGINAL_KEY in _getexif:
-                        date_taken = _getexif[DATE_TIME_ORIGINAL_KEY]
-                if not date_taken and hasattr(img, 'tag'):
-                    logger.info('tag exists {}'.format(f))
-                    date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
-                if date_taken:
-                    properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
-            except (KeyError, IOError) as e:
-                logger.error(u'KeyError, IOError {}. Reason: {}'.format(f, e.message))
-                if isinstance(e, IOError) and 'cannot identify image file' not in e.message \
-                        or isinstance(e, KeyError) and e.message != DATE_TIME_ORIGINAL_KEY:
-                    raise
-            except Exception as e:
-                logger.error(u'Exception {}. Reason: {}'.format(f, e.message))
+            if not imghdr.what(full_path):
+                self.unsupported.append(full_path)
+                continue
+
+            date_taken = None
+            # try:
+            img = Image.open(full_path)
+            if hasattr(img, '_getexif'):
+                _getexif = img._getexif()
+                if _getexif and DATE_TIME_ORIGINAL_KEY in _getexif:
+                    date_taken = _getexif[DATE_TIME_ORIGINAL_KEY]
+            if not date_taken and hasattr(img, 'tag'):
+                logger.info('tag exists {}'.format(f))
+                date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
+            if date_taken:
+                properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
+            # except (KeyError, IOError) as e:
+            #     logger.error(u'KeyError, IOError {}. Reason: {}'.format(f, e.message))
+            #             or isinstance(e, KeyError) and e.message != DATE_TIME_ORIGINAL_KEY:
+            #         raise
+            # except Exception as e:
+            #     logger.error(u'Exception {}. Reason: {}'.format(f, e.message))
 
             if not date_taken:
-                properties.update(match.groupdict())
-                if not all(properties.get(key, None) for key in ['year', 'month', 'day']):
+                match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT, f)
+                if match:
+                    properties.update(match.groupdict())
+                    self.matched_regex.append(full_path)
+                else:
+                    # if not all(properties.get(key, None) for key in ['year', 'month', 'day']):
                     min_date = min([getatime(full_path), getmtime(full_path), getctime(full_path)])
                     dt = datetime.fromtimestamp(min_date)
 
