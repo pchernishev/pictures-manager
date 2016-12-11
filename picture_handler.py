@@ -32,10 +32,14 @@ def create_parser():
     parser = ArgumentParser(description="Pictures Handler parameters")
     parser.add_argument("--src", '-s', dest="src", type=str, help="Folder to parse")
     parser.add_argument("--dst", '-d', dest="dst", type=str, help="Folder copy pictures to")
-    parser.add_argument('--filter', '-f', dest='filter', type=str, nargs='+',
-                        help="Methods for pictures fitering before copy, separated by whitespace")
+    parser.add_argument('--compare', '-c', dest='compare', type=str, nargs='+',
+                        help='Methods for comparing pictures, separated by whitespace.\n'
+                        'Already handled picture will be ignored.\n'
+                        'Possible Compare Methods: '.format())
     parser.add_argument('--ignore', '-i', dest='ignore', type=str, nargs='+',
-                        help="Regexs surrounded by \" for pictures names to ignore, separated by whitespace")
+                        help="Regexs surrounded by \" for picture names to ignore, separated by whitespace")
+    parser.add_argument('--accept', '-a', dest='accept', type=str, nargs='+',
+                        help="Regexs surrounded by \" for picture names to , separated by whitespace")
     parser.add_argument('--not-recursive', '--nr', dest='recursive', action='store_true', default=True)
     parser.add_argument('--dry-run', '--dr', dest='dry_run', action='store_true', default=False)
     return parser
