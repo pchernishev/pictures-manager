@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 import re
 import filecmp
 from os import listdir, remove, mkdir
@@ -12,7 +14,7 @@ import imghdr
 
 from logger import logger
 import regex_patterns
-import filtering
+import comparing
 import utils
 
 DATE_TIME_ORIGINAL_KEY = 36867
@@ -22,7 +24,8 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     logger.info('Handling started')
-    handler = PicturesHandler(args.src, args.dst, args.filter, args.ignore, args.dry_run, args.recursive)
+    handler = PicturesHandler(args.src, args.dst, comparers=args.compare, ignore_regexs=args.ignore,
+                              dry_run=args.dry_run, recursive=args.recursive, accept_regexs=args.accept)
     handler.handle()
     handler.output()
     logger.info('Handling finished\n')
@@ -35,27 +38,30 @@ def create_parser():
     parser.add_argument('--compare', '-c', dest='compare', type=str, nargs='+',
                         help='Methods for comparing pictures, separated by whitespace.\n'
                         'Already handled picture will be ignored.\n'
-                        'Possible Compare Methods: '.format())
+                        'Possible Compare methods: {}'.format(comparing.AVAILABLE_COMPARER_TYPES))
     parser.add_argument('--ignore', '-i', dest='ignore', type=str, nargs='+',
-                        help="Regexs surrounded by \" for picture names to ignore, separated by whitespace")
+                        help='Regexs surrounded by " for picture names to ignore, separated by whitespace')
     parser.add_argument('--accept', '-a', dest='accept', type=str, nargs='+',
-                        help="Regexs surrounded by \" for picture names to , separated by whitespace")
+                        help='Regexs surrounded by " for picture names to accept, separated by whitespace.\n'
+                        'In case parameter not specified all files accepted.\n'
+                        '"default" regex can be specified: {}'.format(regex_patterns.ACCEPTABLE_REGEX))
     parser.add_argument('--not-recursive', '--nr', dest='recursive', action='store_true', default=True)
     parser.add_argument('--dry-run', '--dr', dest='dry_run', action='store_true', default=False)
     return parser
 
 
 class PicturesHandler:
-    def __init__(self, src, dst, filters=None, ignore_regexs=None,
-                 dry_run=False, recursive=True, db_path='files.txt'):
+    def __init__(self, src, dst, comparers=None, ignore_regexs=None, dry_run=False, recursive=True,
+                 accept_regexs=None, db_path='files.txt'):
         if not src or not dst:
             raise ValueError('Manadatory parameter source folder or destination folder is missing')
-        if filters:
-            invalid_filters = set(filters) - set(filtering.available_filter_types)
-            if invalid_filters:
-                raise ValueError('Invalid filters passed {}. Expected no filters or one of the following {}'.format(
-                    invalid_filters, filtering.available_filter_types))
-            self.filter = filtering.get_filter(filters)
+        self.comparer = None
+        if comparers:
+            invalid_comparers = set(comparers) - set(comparing.AVAILABLE_COMPARER_TYPES)
+            if invalid_comparers:
+                raise ValueError('Invalid comparers passed {}. Expected no comparers or one of the following {}'.format(
+                    invalid_comparers, comparing.AVAILABLE_COMPARER_TYPES))
+            self.comparer = comparing.get_comparer(comparers)
 
         self.src = unicode(src)
         self.dst = unicode(dst)
@@ -64,6 +70,11 @@ class PicturesHandler:
         self.dry_run = dry_run
         self.ignore_regexs = [re.compile(r'{}'.format(regex)) for regex in ignore_regexs] if ignore_regexs else []
 
+        if accept_regexs:
+            if 'default' in accept_regexs:
+                accept_regexs[accept_regexs.index('default')] = regex_patterns.ACCEPTABLE_REGEX
+        self.acceptable_regexs = [re.compile(r'{}'.format(regex)) for regex in accept_regexs] if accept_regexs else []
+
         self.db_files = {}
         self.all_handled_names = []
         self.ignored = []
@@ -71,7 +82,7 @@ class PicturesHandler:
         self.matched = defaultdict(list)
         self.matched_regex = []
         self.unmatched = []
-        self.not_passed_filters = []
+        self.not_passed_comparison = []
         self.destination_formats = defaultdict(list)
         self.destination_not_matched = []
         self.ready_to_add = defaultdict(list)
@@ -117,10 +128,10 @@ class PicturesHandler:
         logger.info('*****Total {} files found but not matched at destination directory '.format(
             len(self.destination_not_matched)))
 
-        logger.info('\n\n******Following files matched but not pass filters')
-        for item in self.not_passed_filters:
-            logger.info(u'Not passed filter {}'.format(item[1]))
-        logger.info('*****Total {} files matched not pass filters'.format(len(self.not_passed_filters)))
+        logger.info('\n\n******Following files matched but not pass comparison')
+        for item in self.not_passed_comparison:
+            logger.info(u'Not passed compare {}'.format(item[1]))
+        logger.info('*****Total {} files matched not pass comparison'.format(len(self.not_passed_comparison)))
 
         logger.info('\n\n******Following files matched regex')
         for item in self.matched_regex:
@@ -184,10 +195,10 @@ class PicturesHandler:
             self.all_handled_names += [basename(src), basename(dst)]
 
     def _delete_not_added(self):
-        for f in self.not_passed_filters:
+        for f in self.not_passed_comparison:
             try:
                 remove(f[0])
-            except Exception, e:
+            except Exception as e:
                 self.not_deleted.append((f[0], 'Error {} {}'.format(e.__class__.__name__, e.message)))
 
     def _update_db(self):
@@ -217,7 +228,7 @@ class PicturesHandler:
                     #          in self.ready_to_add[file_format] + self.destination_files[file_format]]
                     # if match['size'] in [size[1] for size in sizes]:
                     #     filename, size = next(size for size in sizes if size[1] == match['size'])
-                    #     self.not_passed_filters.append((join(match['folder'], match['file']),
+                    #     self.not_passed_comparing.append((join(match['folder'], match['file']),
                     #                                    'File {} has the same name and size {}'.format(
                     # filename, size)))
                     #     continue
@@ -270,10 +281,9 @@ class PicturesHandler:
                 self.ignored.append(u'{}. Folder: {}'.format(f, folder))
                 continue
 
-            # match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT, f)
-            # if not match:
-            #     self.unmatched.append(join(folder, f))
-            #     continue
+            if not any(re.match(_regex, f) for _regex in self.acceptable_regexs):
+                self.unmatched.append(join(folder, f))
+                continue
 
             properties = self._update_common_file_props(f, folder)
             full_path = properties['fullpath']
@@ -301,8 +311,8 @@ class PicturesHandler:
             # except Exception as e:
             #     logger.error(u'Exception {}. Reason: {}'.format(f, e.message))
 
-            if not date_taken:
-                match = re.match(regex_patterns.ACCEPTABLE_REGEX_DICT, f)
+            else:
+                match = re.match(regex_patterns.ACCEPTABLE_REGEX, f)
                 if match:
                     properties.update(match.groupdict())
                     self.matched_regex.append(full_path)
@@ -321,29 +331,31 @@ class PicturesHandler:
                     properties.update(update_dict)
                     self.min_date_taken.append((f, update_dict))
 
-            filters = [_filter.name for _filter in self.filter.filters]
-            passed_filter = True
+            passed_comparison = True
             errors = []
+            comparers = []
+            if self.comparer:
+                comparers = [c.name for c in self.comparer.comparers]
             # Name Filets
-            if filtering.NameFilter.name in filters:
+            if comparing.NameComparer.name in comparers:
                 if f in self.all_handled_names:
                     errors.append(u'NAME: {}'.format(f))
-                    passed_filter = False
+                    passed_comparison = False
 
-            # Size Filter
-            if passed_filter and filtering.BinaryFilter.name in filters:
+            # Size Comparer
+            if passed_comparison and comparing.BinaryComparer.name in comparers:
                 if size in self.sizes_files:
                     for _f in self.sizes_files[size]:
                         if filecmp.cmp(_f, full_path, shallow=False):
                             errors.append(u'BINARY: {} same as {} {}'.format(full_path, _f, size))
-                            passed_filter = False
+                            passed_comparison = False
                             break
 
-            if passed_filter:
+            if passed_comparison:
                 self.matched[f].append(properties)
                 self.sizes_files[size].append(full_path)
             else:
-                self.not_passed_filters.append((full_path, '; '.join(errors)))
+                self.not_passed_comparison.append((full_path, '; '.join(errors)))
 
     def _move_prepared_files(self):
         for fg, files in self.ready_to_add.iteritems():
@@ -356,9 +368,10 @@ class PicturesHandler:
                         continue
                     move(full_path, new_file_path)
                     self.moved[full_path] = new_file_path
-                except Exception, e:
+                except Exception as e:
                     msg = 'Error {} {}'.format(e.__class__.__name__, e.message)
                     self.unmoved[full_path] = msg
+
 
 if __name__ == "__main__":
     main()
