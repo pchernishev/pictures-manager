@@ -1,15 +1,13 @@
 import filecmp
 from os.path import getsize, basename
+import sys
+import inspect
 
 
 class Comparer(object):
 
     def __init__(self, dest_files):
         self.destination_files = dest_files
-
-    @classmethod
-    def name(cls):
-        return cls.__name__.lower().replace('comparer', '')
 
     def pass_compare(self, file1, file2):
         raise NotImplementedError()
@@ -52,13 +50,10 @@ class CompositionComparer(Comparer):
                 return False
         return True
 
-AVAILABLE_COMPARER_TYPES = [BinaryComparer.name(), NameComparer.name(), SizeComparer.name(), CompositionComparer.name()]
-COMPARER_INITIALIZERS = {
-    BinaryComparer.name(): BinaryComparer,
-    NameComparer.name(): NameComparer,
-    SizeComparer.name(): SizeComparer,
-    CompositionComparer.name(): CompositionComparer
-}
+
+AVAILABLE_COMPARERS = dict([(m[0].lower().replace(Comparer.__name__, ''), m[1])
+                            for m in inspect.getmembers(sys.modules[__name__], inspect.isclass)
+                            if issubclass(m[1], Comparer) and m[1] != Comparer])
 
 
 def get_comparer(comparer):
@@ -68,10 +63,10 @@ def get_comparer(comparer):
         compare_methods = []
         for _type in comparer:
             compare_methods.append(get_comparer(_type))
-        ret_val = COMPARER_INITIALIZERS[CompositionComparer.name](compare_methods)
+        ret_val = AVAILABLE_COMPARERS[CompositionComparer.__name__](compare_methods)
     else:
-        if comparer not in AVAILABLE_COMPARER_TYPES:
-            raise ValueError('Incompatible comparer type {}'.format(comparer))
-        ret_val = COMPARER_INITIALIZERS[comparer]()
+        if comparer not in AVAILABLE_COMPARERS:
+            raise ValueError('Incompatible compare parameter {} passed'.format(comparer))
+        ret_val = AVAILABLE_COMPARERS[comparer]()
 
     return ret_val
