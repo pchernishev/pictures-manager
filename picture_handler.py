@@ -55,9 +55,8 @@ class PicturesHandler:
                  accept_regexs=None, db_path='files.txt'):
         if not src or not dst:
             raise ValueError('Manadatory parameter source folder or destination folder is missing')
-        self.comparer = None
         if comparers:
-            self.comparer = comparing.get_comparer(comparers)
+            self.comparers = dict((c, comparing.get_comparer(c)) for c in comparers)
 
         self.src = unicode(src)
         self.dst = unicode(dst)
@@ -330,17 +329,17 @@ class PicturesHandler:
 
             passed_comparison = True
             errors = []
-            comparers = []
-            if self.comparer:
-                comparers = [c.name for c in self.comparer.comparers]
-            # Name Filets
-            if comparing.NameComparer.__name__ in comparers:
+            # Name Filter
+            if 'name' in self.comparers:
                 if f in self.all_handled_names:
                     errors.append(u'NAME: {}'.format(f))
                     passed_comparison = False
 
+            if 'size' in self.comparers:
+                pass
+
             # Size Comparer
-            if passed_comparison and comparing.BinaryComparer.__name__ in comparers:
+            if passed_comparison and 'binary' in self.comparers:
                 if size in self.sizes_files:
                     for _f in self.sizes_files[size]:
                         if filecmp.cmp(_f, full_path, shallow=False):
