@@ -200,7 +200,7 @@ class PicturesHandler:
 
     def _update_db(self):
         self.db_files.update(self.moved)
-        utils.save_db_files(self.db_files, self.dst, 'files_1.txt')
+        utils.save_db_files(self.db_files, self.dst, 'files.txt')
 
     def _prepare_new_files_for_copy(self):
         def get_new_filename():
@@ -288,17 +288,21 @@ class PicturesHandler:
             # Photo file
             if imghdr.what(full_path):
                 date_taken = None
-                # try:
-                img = Image.open(full_path)
-                if hasattr(img, '_getexif'):
-                    _getexif = img._getexif()
-                    if _getexif and DATE_TIME_ORIGINAL_KEY in _getexif:
-                        date_taken = _getexif[DATE_TIME_ORIGINAL_KEY]
-                if not date_taken and hasattr(img, 'tag'):
-                    logger.info('tag exists {}'.format(f))
-                    date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
-                if date_taken:
-                    properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
+                img = None
+                try:
+                    img = Image.open(full_path)
+                except IOError:
+                    pass
+                if img:
+                    if hasattr(img, '_getexif'):
+                        _getexif = img._getexif()
+                        if _getexif and DATE_TIME_ORIGINAL_KEY in _getexif:
+                            date_taken = _getexif[DATE_TIME_ORIGINAL_KEY]
+                            if not date_taken and hasattr(img, 'tag'):
+                                logger.info('tag exists {}'.format(f))
+                                date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
+                            if date_taken:
+                                properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
                 # except (KeyError, IOError) as e:
                 #     logger.error(u'KeyError, IOError {}. Reason: {}'.format(f, e.message))
                 #             or isinstance(e, KeyError) and e.message != DATE_TIME_ORIGINAL_KEY:

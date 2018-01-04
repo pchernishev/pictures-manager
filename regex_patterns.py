@@ -1,7 +1,7 @@
 NEW_FILE_FORMAT = '{}_{}.{extension}'
 NEW_SUFFIX_FORMAT = '{:0=3d}'
 DELIMITER = '[-|_| |\.|~]?'
-PHOTO_FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'nef', 'gif']
+PHOTO_FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'nef', 'gif', 'dng']
 VIDEO_FILE_EXTENSIONS = [
     '264', '3g2', '3gp', '3gp2', '3gpp', '3gpp2', '3mm', '3p2', '60d', '787', '89', 'aaf', 'aec', 'aep', 'aepx',
     'aet', 'aetx', 'ajp', 'ale', 'am', 'amc', 'amv', 'amx', 'anim', 'aqt', 'arcut', 'arf', 'asf', 'asx', 'avb',
@@ -36,10 +36,10 @@ REGEX_PARTS = {
         'extension': '\.(?P<extension>{})'.format('|'.join(EXTENSIONS + [ext.upper() for ext in EXTENSIONS])),
         'date': '((?P<year>[1-2][9|0]\d{2})' + DELIMITER + '(?P<month>[0-1]\d)' + DELIMITER + '(?P<day>[0-3]\d))',
         'time_no_milli': '(?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})',
-        'time': '(?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})' +
-                DELIMITER + '(?P<millisecond>\d{3})?',
-        'prefix': '(?P<prefix>IMG|Screenshot|[a-zA-Z|\d]{1,4})',
-        'suffix': '(?P<suffix>\d{1,4}|\(\d\)|\w{1,10}|Burst\d{2}|WA\d{4})',
+        'time': '((?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})' +
+                DELIMITER + '(?P<millisecond>\d{3})?)',
+        'prefix': '(?P<prefix>IMG|VID|Screenshot|[a-zA-Z|\d]{4})',
+        'suffix': '(?P<suffix>(\d|\w){1,4}|\(\d\)|Burst\d{2}|WA\d{4})',
         'delimiter': DELIMITER,
         'delimiter_once': DELIMITER.replace('?', ''),
     }
