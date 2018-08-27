@@ -38,7 +38,7 @@ REGEX_PARTS = {
         'time_no_milli': '(?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})',
         'time': '((?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})' +
                 DELIMITER + '(?P<millisecond>\d{3})?)',
-        'prefix': '(?P<prefix>IMG|VID|Screenshot|[a-zA-Z|\d]{4})',
+        'prefix': '(?P<prefix>Screenshot|[a-zA-Z|\d]{1,4})',
         'suffix': '(?P<suffix>(\d|\w){1,4}|\(\d\)|Burst\d{2}|WA\d{4})',
         'delimiter': DELIMITER,
         'delimiter_once': DELIMITER.replace('?', ''),
