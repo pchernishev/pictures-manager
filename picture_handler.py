@@ -38,19 +38,21 @@ def create_parser():
     parser.add_argument('--compare', '-c', dest='compare', type=str, nargs='+',
                         help='Methods for comparing pictures, separated by whitespace.\n'
                         'Already handled picture will be ignored.\n'
-                        'Possible Compare methods: {}'.format(comparing.AVAILABLE_COMPARERS))
+                        'Possible Compare methods: {}'.format(comparing.AVAILABLE_COMPARERS.keys()))
     parser.add_argument('--ignore', '-i', dest='ignore', type=str, nargs='+',
                         help='Regexs surrounded by " for picture names to ignore, separated by whitespace')
     parser.add_argument('--accept', '-a', dest='accept', type=str, nargs='+',
                         help='Regexs surrounded by " for picture names to accept, separated by whitespace.\n'
                         'In case parameter not specified all files accepted.\n'
-                        '"default" regex can be specified: {}'.format(regex_patterns.ACCEPTABLE_REGEXS))
+                        'preset "default" "camera" "mobile" regex can be specified')
+    # '{}'.format(regex_patterns.ACCEPTABLE_REGEXS))
     parser.add_argument('--not-recursive', '--nr', dest='recursive', action='store_true', default=True)
     parser.add_argument('--dry-run', '--dr', dest='dry_run', action='store_true', default=False)
     return parser
 
 
-class PicturesHandler:
+class PicturesHandler(object):
+
     def __init__(self, src, dst, comparers=None, ignore_regexs=None, dry_run=False, recursive=True,
                  accept_regexs=None, db_path='files.txt'):
         if not src or not dst:
@@ -69,6 +71,13 @@ class PicturesHandler:
             if 'default' in accept_regexs:
                 accept_regexs.remove('default')
                 accept_regexs += regex_patterns.ACCEPTABLE_REGEXS
+            if 'mobile' in accept_regexs:
+                accept_regexs.remove('mobile')
+                accept_regexs.append(regex_patterns.ACCEPTABLE_REGEXS[0])
+            if 'camera' in accept_regexs:
+                accept_regexs.remove('camera')
+                accept_regexs.append(regex_patterns.ACCEPTABLE_REGEXS[1])
+
         self.acceptable_regexs = [re.compile(r'{}'.format(regex)) for regex in accept_regexs] if accept_regexs else []
 
         self.db_files = {}
@@ -298,35 +307,15 @@ class PicturesHandler:
                         _getexif = img._getexif()
                         if _getexif and DATE_TIME_ORIGINAL_KEY in _getexif:
                             date_taken = _getexif[DATE_TIME_ORIGINAL_KEY]
-                            if not date_taken and hasattr(img, 'tag'):
-                                logger.info('tag exists {}'.format(f))
-                                date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
-                            if date_taken:
-                                properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
-                # except (KeyError, IOError) as e:
-                #     logger.error(u'KeyError, IOError {}. Reason: {}'.format(f, e.message))
-                #             or isinstance(e, KeyError) and e.message != DATE_TIME_ORIGINAL_KEY:
-                #         raise
-                # except Exception as e:
-                #     logger.error(u'Exception {}. Reason: {}'.format(f, e.message))
-
+                    if not date_taken and hasattr(img, 'tag'):
+                        logger.info('tag exists {}'.format(f))
+                        date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
+                if date_taken:
+                    properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
                 else:
-                    # match = re.match(regex_patterns.ACCEPTABLE_REGEX, f)
-                    # if match:
-                    #     properties.update(match.groupdict())
-                    #     self.matched_regex.append(full_path)
-                    # else:
-                    # if not all(properties.get(key, None) for key in ['year', 'month', 'day']):
                     properties.update(self._retrieve_min_date(f, full_path))
             elif properties['extension'] in regex_patterns.VIDEO_FILE_EXTENSIONS:
-                # match = re.match(regex_patterns.ACCEPTABLE_REGEX, f)
-                # if match and all(properties.get(key, None) for key in ['year', 'month', 'day']):
-                #     properties.update(match.groupdict())
-                #     self.matched_regex.append(full_path)
-                # else:
-                # if not all(properties.get(key, None) for key in ['year', 'month', 'day']):
                 properties.update(self._retrieve_min_date(f, full_path))
-                # self.unsupported.append(full_path)
             else:
                 self.unsupported.append(full_path)
                 continue
@@ -360,6 +349,14 @@ class PicturesHandler:
     def _retrieve_min_date(self, f, full_path):
         min_date = min([getatime(full_path), getmtime(full_path), getctime(full_path)])
         dt = datetime.fromtimestamp(min_date)
+        match = re.match(regex_patterns.ACCEPTABLE_REGEXS[0], f)
+        if match:
+            group_dict = match.groupdict()
+            group_dict = dict([(key, int(value if value else '0')) for key, value in match.groupdict().iteritems()
+                              if key in ['year', 'month', 'day', 'hour', 'minute', 'second']])
+            dt_from_name = datetime(group_dict['year'], group_dict['month'], group_dict['day'], group_dict['hour'],
+                                    group_dict['minute'], group_dict['second'])
+        dt = min(dt, dt_from_name)
 
         def format_func(num):
             return '{:0=2d}'.format(num)
