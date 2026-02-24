@@ -1,9 +1,10 @@
 from __future__ import print_function
 import os
-from os.path import exists, join, basename, dirname
+from os.path import exists, join, basename, dirname, getsize
 import json
 import shutil
 import re
+import filecmp
 from collections import defaultdict
 
 from logger import logger
@@ -33,13 +34,28 @@ def sync_folder_and_db(folder, recursive=True, dry_run=True, logger_func=None):
     files_in_db = load_db_files(folder)
     files_in_folder = defaultdict(dict)
     files_in_db_modified = defaultdict(dict)
-    print('%s' % files_in_db)
+    # logger_func('{}'.format(files_in_db))
+    sizes = defaultdict(list)
+    duped_files = defaultdict(list)
     for path, subdirs, files in os.walk(folder):
         for name in files:
-            files_in_folder['name'] = {'path': folder}
-    for key, value in files_in_db:
-        files_in_db_modified[basename(value)] = {'old_path': dirname(key), 'old_name': basename(key), 'new_path': dirname(value)}
+            full_path = join(folder, name)
+            size = getsize(full_path)
+            files_in_folder[name] = {
+                'path': folder,
+                'size': size
+                }
+            sizes[size].append(full_path)
+    # sizes = set(sizes)
+    logger_func('files in folder: {}, sizes: {}'.format(len(files_in_folder.keys()), len(sizes.keys())))
+    logger_func('files in DB: {}'.format(len(files_in_db.keys())))
 
+    for key, value in files_in_db.items():
+        files_in_db_modified[basename(value)] = {'old_path': dirname(key), 
+                                                 'old_name': basename(key), 
+                                                 'new_path': dirname(value),
+                                                 'new_name': basename(value)
+                                                 }
     # files_in_folder = [join(folder, _f) for _f in os.listdir(folder) if
     #                    isfile(join(folder, _f))
     #                    and re.match(regex_patterns.DESTINATION_REGEX, _f)]
@@ -53,34 +69,47 @@ def sync_folder_and_db(folder, recursive=True, dry_run=True, logger_func=None):
     missing_in_folder = get_missing_in_folder()
     missing_in_db = get_missing_in_db()
 
-    def output():
-        logger_func('Number of missing_in_folder {}'.format(len(missing_in_folder)))
-        logger_func('Number of missing_in_db {}'.format(len(missing_in_db)))
-        if dry_run:
-            logger_func('List of missing_in_db\n{}\n'.format('\n'.join(missing_in_db)))
-            logger_func('List of missing_in_folder\n{}\n'.format('\n'.join(missing_in_folder)))
+    def output_missing_files():
+        logger_func('Number of missing_in_folder: {}'.format(len(missing_in_folder)))
+        logger_func('The following DB files are missing in folder')
+        logger_func('List of files missing in folder\n{}\n'.format('\n'.join(missing_in_folder)))
+
+        logger_func('Number of files missing in DB: {}'.format(len(missing_in_db)))
+        logger_func('The following DB files are missing in DB')
+        logger_func('List of files missing in DB\n{}\n'.format('\n'.join(missing_in_db)))
+        
+    output_missing_files()
 
     if dry_run:
-        output()
         return
 
-    # files_in_db_value_key_changed = {}
-    # for key, value in files_in_db_modified.iteritems():
+    # files_in_db_value_key_changed = []
+    # for key, value in files_in_db_modified.items():
     #     files_in_db_value_key_changed[value] = key
 
-    # for f in missing_in_folder:
-    #     del files_in_db[files_in_db_value_key_changed[f]]
-    # # for f in missing_in_db:
-    # #     files_in_db[]
+    for f in missing_in_folder:
+        key_to_delete = files_in_db_modified[f]
+        del files_in_db[join(key_to_delete['old_path'], key_to_delete['old_name'])]
 
-    # output()
+    # for f in missing_in_db:
+    #     files_in_db[]
     # missing_in_folder = get_missing_in_folder()
     # missing_in_db = get_missing_in_db()
-    # output()
-    # save_db_files(files_in_db, folder)
+    # output_missing_files()
+    save_db_files(files_in_db, folder)
+
+    # for key in sizes.keys():
+    #     paths = sizes[key]
+    #     if len(paths) > 1:
+    #         for f in paths:
+    #             if f != paths[0]:
+    #                 if filecmp.cmp(paths[0], f):
+    #                     logger_func('Duplicated: {0}  {1}'.format(paths[0], f))
+    #                     # os.remove(f)
+    #                     # break
 
 
-def move_files(folder, new_folder, regex_pattern='.*\.\w{2,4}', create_subfolder=True, dry_run=True):
+def move_files(folder, new_folder, regex_pattern='.*\\.\\w{2,4}', create_subfolder=True, dry_run=True):
     db_files = load_db_files(folder)
     new_folder_db_files = {}
     old_folder_db_files = dict(db_files)

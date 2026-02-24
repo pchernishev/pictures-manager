@@ -1,6 +1,6 @@
 NEW_FILE_FORMAT = '{}_{}.{extension}'
 NEW_SUFFIX_FORMAT = '{:0=3d}'
-DELIMITER = '[-|_| |\.|~]?'
+DELIMITER = '[-|_| |\\.|~]?'
 PHOTO_FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'nef', 'gif', 'dng']
 VIDEO_FILE_EXTENSIONS = [
     '264', '3g2', '3gp', '3gp2', '3gpp', '3gpp2', '3mm', '3p2', '60d', '787', '89', 'aaf', 'aec', 'aep', 'aepx',
@@ -30,25 +30,30 @@ VIDEO_FILE_EXTENSIONS = [
     'vfw', 'vfz', 'vgz', 'vid', 'video', 'viewlet', 'viv', 'vivo', 'vlab', 'vob', 'vp3', 'vp6', 'vp7', 'vpj',
     'vro', 'vs4', 'vse', 'vsp', 'w32', 'wcp', 'webm', 'wlmp', 'wm', 'wmd', 'wmmp', 'wmv', 'wmx', 'wot', 'wp3',
     'wpl', 'wtv', 'wve', 'wvx', 'xej', 'xel', 'xesc', 'xfl', 'xlmv', 'xmv', 'xvid', 'y4m', 'yog', 'yuv', 'zeg',
-    'zm1', 'zm2', 'zm3', 'zmv']
+    'zm1', 'zm2', 'zm3', 'zmv'
+    ]
+
 EXTENSIONS = PHOTO_FILE_EXTENSIONS + VIDEO_FILE_EXTENSIONS
+
 REGEX_PARTS = {
-        'extension': '\.(?P<extension>{})'.format('|'.join(EXTENSIONS + [ext.upper() for ext in EXTENSIONS])),
-        'date': '((?P<year>[1-2][9|0]\d{2})' + DELIMITER + '(?P<month>[0-1]\d)' + DELIMITER + '(?P<day>[0-3]\d))',
-        'time_no_milli': '(?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})',
-        'time': '((?P<hour>[0-2]\d)' + DELIMITER + '(?P<minute>\d{2})' + DELIMITER + '(?P<second>\d{2})' +
-                DELIMITER + '(?P<millisecond>\d{3})?)',
-        'prefix': '(?P<prefix>Screenshot|[a-zA-Z|\d]{1,4})',
-        'suffix': '(?P<suffix>(\d|\w){1,4}|\(\d\)|Burst\d{2}|WA\d{4})',
+        'extension': '\\.(?P<extension>{})'.format('|'.join(EXTENSIONS + [ext.upper() for ext in EXTENSIONS])),
+        'date': '((?P<year>[1-2][9|0]\\d{2})' + DELIMITER + '(?P<month>[0-1]\\d)' + DELIMITER + '(?P<day>[0-3]\\d))',
+        'time_no_milli': '(?P<hour>[0-2]\\d)' + DELIMITER + '(?P<minute>\\d{2})' + DELIMITER + '(?P<second>\\d{2})',
+        'time': '((?P<hour>[0-2]\\d)' + DELIMITER + '(?P<minute>\\d{2})' + DELIMITER + '(?P<second>\\d{2})' +
+                DELIMITER + '(?P<millisecond>\\d{3})?)',
+        'prefix': '(?P<prefix>Screenshot|[a-zA-Z]{1,4})',
+        'suffix': '(?P<suffix>(\\d|\\w){1,4}|\\(\\d\\)|Burst\\d{2}|WA\\d{4})',
         'delimiter': DELIMITER,
         'delimiter_once': DELIMITER.replace('?', ''),
     }
-DATE_TAKEN_REGEX = '(?P<year>20[0-1]\d):(?P<month>[0-1]\d):(?P<day>[0-3]\d)[ ]' \
-                   '(?P<hour>[0-2]\d):(?P<minute>\d{2}):(?P<second>\d{2})'
+
+DATE_TAKEN_REGEX = '(?P<year>20[0-2]\\d):(?P<month>[0-1]\\d):(?P<day>[0-3]\\d)[ ](?P<hour>[0-2]\\d):(?P<minute>\\d{2}):(?P<second>\\d{2})'
+
 ACCEPTABLE_REGEXS = [
     '^{prefix}?{delimiter}{date}{delimiter}{time}?{delimiter}{suffix}?{extension}$'.format(**REGEX_PARTS),
     '^{prefix}{delimiter_once}{suffix}{extension}$'.format(**REGEX_PARTS)
-]
+    ]
+
 DESTINATION_REGEX = '^{date}_{time_no_milli}_{suffix}{extension}'.format(**REGEX_PARTS)
 DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION = '{year}{month}{day}_{hour}{minute}{second}'
 DESTINATION_FORMAT_NO_SUFFIX = DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION + '.{extension}'

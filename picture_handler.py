@@ -11,8 +11,8 @@ import json
 from PIL import Image
 from datetime import datetime
 import imghdr
-
 from logger import logger
+import logging
 import regex_patterns
 import comparing
 import utils
@@ -23,9 +23,16 @@ DATE_TIME_ORIGINAL_KEY = 36867
 def main():
     parser = create_parser()
     args = parser.parse_args()
+
+    logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.INFO)
+
     logger.info('Handling started')
     handler = PicturesHandler(args.src, args.dst, comparers=args.compare, ignore_regexs=args.ignore,
                               dry_run=args.dry_run, recursive=args.recursive, accept_regexs=args.accept)
+    if args.sync:
+        utils.sync_folder_and_db(handler.dst, handler.recursive, handler.dry_run, logger.info);
+        return
+
     handler.handle()
     handler.output()
     logger.info('Handling finished\n')
@@ -48,24 +55,26 @@ def create_parser():
     # '{}'.format(regex_patterns.ACCEPTABLE_REGEXS))
     parser.add_argument('--not-recursive', '--nr', dest='recursive', action='store_true', default=True)
     parser.add_argument('--dry-run', '--dr', dest='dry_run', action='store_true', default=False)
+    parser.add_argument('--sync-folder-and-db', '--sync', dest='sync', action='store_true', default=False)
     return parser
 
 
 class PicturesHandler(object):
 
-    def __init__(self, src, dst, comparers=None, ignore_regexs=None, dry_run=False, recursive=True,
-                 accept_regexs=None, db_path='files.txt'):
+    def __init__(self, src, dst, comparers=None, ignore_regexs=None, dry_run=False, recursive=False,
+                 accept_regexs=None, sync=False, db_path='files.txt'):
         if not src or not dst:
             raise ValueError('Manadatory parameter source folder or destination folder is missing')
         if comparers:
             self.comparers = dict((c, comparing.get_comparer(c)) for c in comparers)
 
-        self.src = unicode(src)
-        self.dst = unicode(dst)
+        self.src = str(src) # unicode(src)
+        self.dst = str(dst) # unicode(dst)
         self.db_path = db_path
         self.recursive = recursive
         self.dry_run = dry_run
         self.ignore_regexs = [re.compile(r'{}'.format(regex)) for regex in ignore_regexs] if ignore_regexs else []
+        self.sync_folder_and_db = sync
 
         if accept_regexs:
             if 'default' in accept_regexs:
@@ -97,56 +106,73 @@ class PicturesHandler(object):
         self.not_deleted = []
         self.min_date_taken = []
         self.unsupported = []
+        self.num_of_dst_files = 0
 
     def output(self):
-        logger.info('\n')
-        logger.info('*****Following files wern\'t matched')
-        for item in self.unmatched:
-            logger.info(u'Unmatched  {}'.format(item))
-        logger.info('*****Total {} files wern\'t matched\n'.format(len(self.unmatched)))
 
-        counter = 0
-        logger.info('*****Following files were matched')
-        for key, matches in self.matched.iteritems():
-            if len(matches) > 1:
-                logger.info(u'*****Matched Group: {}'.format(key))
-            for match in matches:
-                counter += 1
-                logger.info(u'{}Matched: {file} Folder: {folder}'.format('\t' if len(matches) > 1 else '', **match))
-        logger.info('*****Total {} files matched\n'.format(counter))
-
-        logger.info(u'*****Following files were found at destination directory {}'.format(self.dst))
+        # logger.info(u'*****Following files were found at destination directory {}'.format(self.dst))
         # counter = 0
-        # for key, matches in self.destination_files.iteritems():
-        #     if len(matches) > 1:
-        #         logger.info('***Dest group: {}'.format(key))
-        #     for match in matches:
-        #         counter += 1
-        #         logger.info('{}Dest: {file} '.format('\t' if len(matches) > 1 else '', **match))
-        logger.info(u'*****Total {} formats found at destination directory {}'.format(
-            len(self.destination_formats), self.dst))
+        # for key, matches in self.destination_files.items():
+            # if len(matches) > 1:
+            #     logger.info('***Dest group: {}'.format(key))
+            # for match in matches:
+            #     counter += 1
+                # logger.info('{}Dest: {file} '.format('\t' if len(matches) > 1 else '', **match))
+        logger.info('*****Total {} files found at destination directory {}\n'.format(
+            self.num_of_dst_files, self.dst))
+        logger.info(u'*****Total {} formats found at destination directory'.format(
+           len(self.destination_formats)))
         logger.info(u'*****Total {} files found and matched at destination directory {}'.format(
             sum([len(val) for val in self.destination_formats.values()]), self.dst))
-
-        logger.info(u'******Following files found but not matched at destination directory {}'.format(self.dst))
-        for item in self.destination_not_matched:
-            logger.info(u'Dest Not Matched. {}'.format(item))
         logger.info('*****Total {} files found but not matched at destination directory\n'.format(
             len(self.destination_not_matched)))
+        for item in self.destination_not_matched:
+            logger.info(u'Destination Not Matched: {}'.format(item))
 
-        logger.info('******Following files matched but not pass comparison')
+        logger.info('\n')
+        # logger.info('*****Following files wern\'t matched')
+        logger.info('*****Total {} files wern\'t matched\n'.format(len(self.unmatched)))
+        for item in self.unmatched:
+            logger.info(u'Unmatched  {}'.format(item))
+
+        # logger.info('******Following files matched but not pass comparison')
+        logger.info('*****Total {} files matched not pass comparison\n'.format(len(self.not_passed_comparison)))
         for item in self.not_passed_comparison:
             logger.info(u'Not passed compare {}'.format(item[1]))
-        logger.info('*****Total {} files matched not pass comparison\n'.format(len(self.not_passed_comparison)))
 
-        logger.info('******Following files matched regex')
-        for item in self.matched_regex:
+        # logger.info('******Following files matched regex')
+        # logger.info('*****Total {} files matched regex\n'.format(len(self.matched_regex)))
+        # for item in self.matched_regex:
+        #     logger.info(u'{}'.format(item))
+
+        # logger.info('****Following files were ignored')
+        logger.info('*****Total {} files were ignored\n'.format(len(self.ignored)))
+        for item in self.ignored:
             logger.info(u'{}'.format(item))
-        logger.info('*****Total {} files matched regex\n'.format(len(self.matched_regex)))
+
+        # logger.info('*****Following files new name created by taken min date')
+        # for name, props in self.min_date_taken:
+        #     logger.info(u'{}. Props{}'.format(name, props))
+        logger.info('*****Total {} files new name created by taken min date\n'.format(len(self.min_date_taken)))
+
+        # logger.info('*****Following files are of unsupported type')
+        logger.info('*****Total {} files are of unsupported type\n'.format(len(self.unsupported)))
+        for item in self.unsupported:
+            logger.info(u'{}'.format(item))
+
+        counter = 0
+        # logger.info('*****Following files were matched')
+        for key, matches in self.matched.items():
+            # if len(matches) > 1:
+            #     logger.info(u'*****Matched Group: {}'.format(key))
+            for match in matches:
+                counter += 1
+                # logger.info(u'{}Matched: {file} Folder: {folder}'.format('\t' if len(matches) > 1 else '', **match))
+        logger.info('*****Total {} files matched\n'.format(counter))
 
         logger.info('*****Following files are ready to be added')
         counter = 0
-        for key, matches in self.ready_to_add.iteritems():
+        for key, matches in self.ready_to_add.items():
             if len(matches) > 1:
                 logger.info(u'***Ready group: {}'.format(key))
             for match in matches:
@@ -154,36 +180,23 @@ class PicturesHandler(object):
                 logger.info(u'{}Ready File: {file}, New File Name: {new_file_name}'.format(
                     '\t' if len(matches) > 1 else '', **match))
         logger.info('*****Total {} files ready to be added\n'.format(counter))
-
-        logger.info('****Following files were ignored')
-        for item in self.ignored:
-            logger.info(u'{}'.format(item))
-        logger.info('*****Total {} files were ignored\n'.format(len(self.ignored)))
-
-        logger.info('*****Following files new name created by taken min date')
-        for name, props in self.min_date_taken:
-            logger.info(u'{}. Props{}'.format(name, props))
-        logger.info('*****Total {} files new name created by taken min date\n'.format(len(self.min_date_taken)))
-
-        logger.info('*****Following files are of unsupported type')
-        for item in self.unsupported:
-            logger.info(u'{}'.format(item))
-        logger.info('*****Total {} files are of unsupported type\n'.format(len(self.unsupported)))
-
+        
         if not self.dry_run:
-            logger.info('*****Following files failed to be moved')
-            for item, reason in self.unmoved.iteritems():
-                logger.info(u'Unmoved. {}. {}'.format(item, reason))
             logger.info('*****Total {} files failed to be moved\n'.format(len(self.unmoved)))
+            if len(self.unmoved) > 0:
+                logger.info('*****Following files failed to be moved')
+                for item, reason in self.unmoved.items():
+                    logger.info(u'Unmoved. {}. {}'.format(item, reason))
 
-            logger.info('*****Following files failed to be deleted')
-            for f in self.not_deleted:
-                logger.info(u'Not deleted {}. Reason: {}'.format(f[0], f[1]))
             logger.info('*****Total {} files wern\'t deleted\n'.format(len(self.not_deleted)))
+            if len(self.not_deleted) > 0:
+                logger.info('*****Following files failed to be deleted')
+                for f in self.not_deleted:
+                    logger.info(u'Not deleted {}. Reason: {}'.format(f[0], f[1]))
 
+            logger.info(u'*****Total {} files were moved to {}\n'.format(len(self.moved), self.dst))
             logger.info('******Moved files dict')
             logger.info(json.dumps(self.moved, indent=4))
-            logger.info(u'*****Total {} files were moved to {}\n'.format(len(self.moved), self.dst))
 
     def handle(self):
         self._load_db()
@@ -197,7 +210,7 @@ class PicturesHandler(object):
 
     def _load_db(self):
         self.db_files = utils.load_db_files(self.dst)
-        for src, dst in self.db_files.iteritems():
+        for src, dst in self.db_files.items():
             self.all_handled_names += [basename(src), basename(dst)]
 
     def _delete_not_added(self):
@@ -205,7 +218,7 @@ class PicturesHandler(object):
             try:
                 remove(f[0])
             except Exception as e:
-                self.not_deleted.append((f[0], 'Error {} {}'.format(e.__class__.__name__, e.message)))
+                self.not_deleted.append((f[0], 'Error {} {}'.format(e.__class__.__name__,str(e))))
 
     def _update_db(self):
         self.db_files.update(self.moved)
@@ -221,10 +234,11 @@ class PicturesHandler(object):
             return regex_patterns.NEW_SUFFIX_FORMAT.format(
                 max([int(props['suffix']) for props in file_props_list]) + 1)
 
-        for key, matched in self.matched.iteritems():
+        for key, matched in self.matched.items():
             for match in matched:
+                logger.info('match {}'.format(str(match)))
                 file_format = regex_patterns.DESTINATION_FORMAT_NO_SUFFIX.format(**match).replace('None', '00')
-                if file_format not in self.destination_formats.keys() + self.ready_to_add.keys():
+                if file_format not in list(self.destination_formats) + list(self.ready_to_add):
                     suffix = '000'
                 elif file_format in self.ready_to_add:
                     suffix = get_new_suffix(self.ready_to_add[file_format])
@@ -253,7 +267,7 @@ class PicturesHandler(object):
         properties['extension'] = splitext(full_path)[1].lstrip('.').lower()
         return properties
 
-    def _handle_destination_folder(self, folder, recursive=True):
+    def _handle_destination_folder(self, folder, recursive=False):
         if not exists(folder):
             mkdir(folder)
 
@@ -263,17 +277,23 @@ class PicturesHandler(object):
             for d in dirs:
                 self._handle_destination_folder(d)
         files = [f for f in listdir(folder) if isfile(join(folder, f))]
+        self.num_of_dst_files = len(files)
+        counter_of_matched = 0
         for f in files:
             match = re.match(regex_patterns.DESTINATION_REGEX, f)
             if not match:
                 self.destination_not_matched.append(f)
                 continue
+            else:
+                counter_of_matched =+ 1
+
             properties = self._update_common_file_props(f, folder)
             properties.update(match.groupdict())
             # Create key with no suffix
             key = regex_patterns.DESTINATION_FORMAT_NO_SUFFIX.format(**properties)
             self.destination_formats[key].append(properties)
             self.sizes_files[properties['size']].append(properties['fullpath'])
+        self.num_of_dst_matched_files = counter_of_matched
 
     def _handle_source_folder(self, folder, recursive):
         if recursive:
@@ -311,7 +331,12 @@ class PicturesHandler(object):
                         logger.info('tag exists {}'.format(f))
                         date_taken = img.tag._tagdata[DATE_TIME_ORIGINAL_KEY]
                 if date_taken:
-                    properties.update(re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken).groupdict())
+                    match = re.match(regex_patterns.DATE_TAKEN_REGEX, date_taken)
+                    if match:
+                        properties.update(match.groupdict())
+                    else:
+                        logger.info(format('date_taken case {} full_path: {}'.format(str(date_taken), full_path)))
+                        self.unsupported.append(full_path)
                 else:
                     properties.update(self._retrieve_min_date(f, full_path))
             elif properties['extension'] in regex_patterns.VIDEO_FILE_EXTENSIONS:
@@ -331,7 +356,7 @@ class PicturesHandler(object):
             if 'size' in self.comparers:
                 pass
 
-            # Size Comparer
+            # binary Comparer
             if passed_comparison and 'binary' in self.comparers:
                 if size in self.sizes_files:
                     for _f in self.sizes_files[size]:
@@ -352,11 +377,11 @@ class PicturesHandler(object):
         match = re.match(regex_patterns.ACCEPTABLE_REGEXS[0], f)
         if match:
             group_dict = match.groupdict()
-            group_dict = dict([(key, int(value if value else '0')) for key, value in match.groupdict().iteritems()
+            group_dict = dict([(key, int(value if value else '0')) for key, value in match.groupdict().items()
                               if key in ['year', 'month', 'day', 'hour', 'minute', 'second']])
             dt_from_name = datetime(group_dict['year'], group_dict['month'], group_dict['day'], group_dict['hour'],
                                     group_dict['minute'], group_dict['second'])
-        dt = min(dt, dt_from_name)
+            dt = min(dt, dt_from_name)
 
         def format_func(num):
             return '{:0=2d}'.format(num)
@@ -369,7 +394,7 @@ class PicturesHandler(object):
         return date_props
 
     def _move_prepared_files(self):
-        for fg, files in self.ready_to_add.iteritems():
+        for fg, files in self.ready_to_add.items():
             for f in files:
                 new_file_path = join(self.dst, f['new_file_name'])
                 full_path = join(f['folder'], f['file'])
@@ -380,7 +405,7 @@ class PicturesHandler(object):
                     move(full_path, new_file_path)
                     self.moved[full_path] = new_file_path
                 except Exception as e:
-                    msg = 'Error {} {}'.format(e.__class__.__name__, e.message)
+                    msg = 'Error {} {}'.format(e.__class__.__name__, str(e))
                     self.unmoved[full_path] = msg
 
 
