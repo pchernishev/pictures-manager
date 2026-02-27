@@ -1,7 +1,7 @@
 import logging
 
 
-def init_logger():
+def init_logger() -> logging.Logger:
     _format = '%(asctime)s - %(levelname)s - %(filename)s:%(funcName)s:%(lineno)d - %(message)s'
     date_format = '%d/%m/%Y %H:%M:%S'
     logging.basicConfig(filename='logger.log', level=logging.DEBUG, format=_format,
@@ -19,4 +19,4 @@ def init_logger():
     return logger
 
 
-logger = init_logger()
+logger: logging.Logger = init_logger()

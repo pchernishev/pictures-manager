@@ -40,7 +40,7 @@ def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True
     folder_path = Path(folder)
     for path, subdirs, files in os.walk(folder_path):
         for name in files:
-            full_path = folder_path / name
+            full_path = Path(path) / name
             size = full_path.stat().st_size
             files_in_folder[name] = {
                 'path': folder,

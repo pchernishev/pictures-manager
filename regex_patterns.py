@@ -1,8 +1,8 @@
-NEW_FILE_FORMAT = '{}_{}.{extension}'
-NEW_SUFFIX_FORMAT = '{:0=3d}'
-DELIMITER = '[-|_| |\\.|~]?'
-PHOTO_FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'nef', 'gif', 'dng']
-VIDEO_FILE_EXTENSIONS = [
+NEW_FILE_FORMAT: str = '{}_{}.{extension}'
+NEW_SUFFIX_FORMAT: str = '{:0=3d}'
+DELIMITER: str = '[-|_| |\\.|~]?'
+PHOTO_FILE_EXTENSIONS: list[str] = ['jpg', 'jpeg', 'png', 'nef', 'gif', 'dng']
+VIDEO_FILE_EXTENSIONS: list[str] = [
     '264', '3g2', '3gp', '3gp2', '3gpp', '3gpp2', '3mm', '3p2', '60d', '787', '89', 'aaf', 'aec', 'aep', 'aepx',
     'aet', 'aetx', 'ajp', 'ale', 'am', 'amc', 'amv', 'amx', 'anim', 'aqt', 'arcut', 'arf', 'asf', 'asx', 'avb',
     'avc', 'avd', 'avi', 'avp', 'avs', 'avs', 'avv', 'axm', 'bdm', 'bdmv', 'bdt2', 'bdt3', 'bik', 'bin', 'bix',
@@ -33,10 +33,11 @@ VIDEO_FILE_EXTENSIONS = [
     'zm1', 'zm2', 'zm3', 'zmv'
     ]
 
-EXTENSIONS = PHOTO_FILE_EXTENSIONS + VIDEO_FILE_EXTENSIONS
+EXTENSIONS: list[str] = PHOTO_FILE_EXTENSIONS + VIDEO_FILE_EXTENSIONS
 
-REGEX_PARTS = {
-        'extension': '\\.(?P<extension>{})'.format('|'.join(EXTENSIONS + [ext.upper() for ext in EXTENSIONS])),
+_ALL_EXTENSIONS: str = '|'.join(EXTENSIONS + [ext.upper() for ext in EXTENSIONS])
+REGEX_PARTS: dict[str, str] = {
+        'extension': f'\\.(?P<extension>{_ALL_EXTENSIONS})',
         'date': '((?P<year>[1-2][9|0]\\d{2})' + DELIMITER + '(?P<month>[0-1]\\d)' + DELIMITER + '(?P<day>[0-3]\\d))',
         'time_no_milli': '(?P<hour>[0-2]\\d)' + DELIMITER + '(?P<minute>\\d{2})' + DELIMITER + '(?P<second>\\d{2})',
         'time': '((?P<hour>[0-2]\\d)' + DELIMITER + '(?P<minute>\\d{2})' + DELIMITER + '(?P<second>\\d{2})' +
@@ -47,14 +48,14 @@ REGEX_PARTS = {
         'delimiter_once': DELIMITER.replace('?', ''),
     }
 
-DATE_TAKEN_REGEX = '(?P<year>20[0-2]\\d):(?P<month>[0-1]\\d):(?P<day>[0-3]\\d)[ ](?P<hour>[0-2]\\d):(?P<minute>\\d{2}):(?P<second>\\d{2})'
+DATE_TAKEN_REGEX: str = '(?P<year>20[0-2]\\d):(?P<month>[0-1]\\d):(?P<day>[0-3]\\d)[ ](?P<hour>[0-2]\\d):(?P<minute>\\d{2}):(?P<second>\\d{2})'
 
-ACCEPTABLE_REGEXS = [
+ACCEPTABLE_REGEXS: list[str] = [
     '^{prefix}?{delimiter}{date}{delimiter}{time}?{delimiter}{suffix}?{extension}$'.format(**REGEX_PARTS),
     '^{prefix}{delimiter_once}{suffix}{extension}$'.format(**REGEX_PARTS)
     ]
 
-DESTINATION_REGEX = '^{date}_{time_no_milli}_{suffix}{extension}'.format(**REGEX_PARTS)
-DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION = '{year}{month}{day}_{hour}{minute}{second}'
-DESTINATION_FORMAT_NO_SUFFIX = DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION + '.{extension}'
-DESTINATION_FORMAT = DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION + '{suffix}' + '{extension}'
+DESTINATION_REGEX: str = '^{date}_{time_no_milli}_{suffix}{extension}'.format(**REGEX_PARTS)
+DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION: str = '{year}{month}{day}_{hour}{minute}{second}'
+DESTINATION_FORMAT_NO_SUFFIX: str = DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION + '.{extension}'
+DESTINATION_FORMAT: str = DESTINATION_FORMAT_NO_SUFFIX_NO_EXTENSION + '{suffix}' + '{extension}'

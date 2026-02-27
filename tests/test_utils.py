@@ -80,6 +80,20 @@ class TestSyncFolderAndDb:
         assert gone_src_key not in reloaded
         assert present_src_key in reloaded
 
+    def test_finds_files_in_subdirectories(self, tmp_path) -> None:
+        sub = tmp_path / 'subdir'
+        sub.mkdir()
+        sub_file = sub / 'deep_photo.jpg'
+        sub_file.write_text('deep data')
+        src_key = str(tmp_path / 'orig' / 'deep_photo_src.jpg')
+        db_data = {src_key: str(sub_file)}
+        db_file = tmp_path / 'files.txt'
+        db_file.write_text(json.dumps(db_data))
+        logs: list[str] = []
+        utils.sync_folder_and_db(str(tmp_path), dry_run=False, logger_func=logs.append)
+        reloaded = json.loads(db_file.read_text())
+        assert src_key in reloaded
+
 
 class TestOrganizeByYear:
 
