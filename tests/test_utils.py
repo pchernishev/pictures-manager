@@ -638,3 +638,145 @@ class TestCompareFolders:
         assert result['only_in_a'] == []
         assert result['only_in_b'] == []
         assert result['different_content'] == []
+
+
+class TestIncrementFilenameSuffix:
+
+    def test_increments_standard_suffix(self) -> None:
+        result = utils._increment_filename_suffix('20200315_143022_000.jpg', set())
+        assert result == '20200315_143022_001.jpg'
+
+    def test_skips_existing_names(self) -> None:
+        existing = {'20200315_143022_001.jpg', '20200315_143022_002.jpg'}
+        result = utils._increment_filename_suffix('20200315_143022_000.jpg', existing)
+        assert result == '20200315_143022_003.jpg'
+
+    def test_handles_non_standard_filename(self) -> None:
+        result = utils._increment_filename_suffix('photo.jpg', set())
+        assert result == 'photo_001.jpg'
+
+    def test_preserves_suffix_width(self) -> None:
+        result = utils._increment_filename_suffix('20200315_143022_0000.png', set())
+        assert result == '20200315_143022_0001.png'
+
+
+class TestMergeDbs:
+
+    def test_merge_no_conflicts(self, tmp_path) -> None:
+        db_a = {'20200315_143022_000.jpg': {'source_name': 'IMG_001.jpg', 'size': 100}}
+        db_b = {'20210601_080000_000.jpg': {'source_name': 'IMG_002.jpg', 'size': 200}}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        logs: list[str] = []
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=False, logger_func=logs.append)
+        assert '20200315_143022_000.jpg' in result
+        assert '20210601_080000_000.jpg' in result
+        assert len(result) == 2
+        assert any('Merged directly: 1' in log for log in logs)
+
+    def test_duplicate_same_key_same_size(self, tmp_path) -> None:
+        entry = {'source_name': 'IMG_001.jpg', 'size': 100}
+        db_a = {'20200315_143022_000.jpg': dict(entry)}
+        db_b = {'20200315_143022_000.jpg': dict(entry)}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        (tmp_path / '20200315_143022_000.jpg').write_bytes(b'x' * 100)
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        logs: list[str] = []
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=True, logger_func=logs.append)
+        assert len(result) == 1
+        assert any('Duplicate' in log for log in logs)
+
+    def test_conflict_different_size_renames_key(self, tmp_path) -> None:
+        db_a = {'20200315_143022_000.jpg': {'source_name': 'IMG_A.jpg', 'size': 100}}
+        db_b = {'20200315_143022_000.jpg': {'source_name': 'IMG_B.jpg', 'size': 200}}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        logs: list[str] = []
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=True, logger_func=logs.append)
+        assert '20200315_143022_000.jpg' in result
+        assert '20200315_143022_001.jpg' in result
+        assert result['20200315_143022_001.jpg']['source_name'] == 'IMG_B.jpg'
+        assert any('Conflict' in log for log in logs)
+        assert any('renaming' in log for log in logs)
+
+    def test_conflict_renames_file_on_disk(self, tmp_path) -> None:
+        db_a = {'20200315_143022_000.jpg': {'source_name': 'A.jpg', 'size': 5}}
+        db_b = {'20200315_143022_000.jpg': {'source_name': 'B.jpg', 'size': 7}}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        (tmp_path / '20200315_143022_000.jpg').write_text('aaaaa')
+        # Simulate B's file already in folder with a different name (OS renamed on copy)
+        (tmp_path / 'b_copy.jpg').write_text('bbbbbbb')
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=False, logger_func=lambda x: None)
+        assert '20200315_143022_001.jpg' in result
+        # The file should have been renamed on disk
+        assert (tmp_path / '20200315_143022_001.jpg').exists()
+
+    def test_dry_run_does_not_modify(self, tmp_path) -> None:
+        db_a = {'20200315_143022_000.jpg': {'source_name': 'A.jpg', 'size': 100}}
+        db_b = {'20210601_080000_000.jpg': {'source_name': 'B.jpg', 'size': 200}}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        original_text = (tmp_path / 'files.txt').read_text()
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=True, logger_func=lambda x: None)
+        assert (tmp_path / 'files.txt').read_text() == original_text
+
+    def test_empty_db_b_returns_db_a(self, tmp_path) -> None:
+        db_a = {'20200315_143022_000.jpg': {'source_name': 'IMG.jpg', 'size': 100}}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text('{}')
+        logs: list[str] = []
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=True, logger_func=logs.append)
+        assert result == db_a
+        assert any('empty' in log for log in logs)
+
+    def test_nonexistent_folder_returns_empty(self, tmp_path) -> None:
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text('{}')
+        logs: list[str] = []
+        result = utils.merge_dbs(str(tmp_path / 'nope'), str(db_b_path), logger_func=logs.append)
+        assert result == {}
+
+    def test_nonexistent_db_b_returns_empty(self, tmp_path) -> None:
+        (tmp_path / 'files.txt').write_text('{}')
+        logs: list[str] = []
+        result = utils.merge_dbs(str(tmp_path), str(tmp_path / 'nope.txt'), logger_func=logs.append)
+        assert result == {}
+
+    def test_multiple_conflicts_increment_suffix(self, tmp_path) -> None:
+        db_a = {
+            '20200315_143022_000.jpg': {'source_name': 'A.jpg', 'size': 100},
+            '20200315_143022_001.jpg': {'source_name': 'B.jpg', 'size': 150},
+        }
+        db_b = {
+            '20200315_143022_000.jpg': {'source_name': 'C.jpg', 'size': 200},
+        }
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=True, logger_func=lambda x: None)
+        # _001 already taken by db_a, so B's conflict should go to _002
+        assert '20200315_143022_002.jpg' in result
+        assert result['20200315_143022_002.jpg']['source_name'] == 'C.jpg'
+
+    def test_duplicate_deletes_file_on_disk(self, tmp_path) -> None:
+        db_a = {'20200315_143022_000.jpg': {'source_name': 'IMG.jpg', 'size': 10}}
+        db_b = {'20200315_143022_000.jpg': {'source_name': 'IMG.jpg', 'size': 10}}
+        (tmp_path / 'files.txt').write_text(json.dumps(db_a))
+        (tmp_path / '20200315_143022_000.jpg').write_bytes(b'0123456789')
+        # Simulate a second identical copy the user moved in
+        sub = tmp_path / 'sub'
+        sub.mkdir()
+        (sub / 'dup_copy.jpg').write_bytes(b'0123456789')
+        db_b_path = tmp_path / 'db_b.txt'
+        db_b_path.write_text(json.dumps(db_b))
+        result = utils.merge_dbs(str(tmp_path), str(db_b_path), dry_run=False, logger_func=lambda x: None)
+        assert len(result) == 1
+        # The duplicate file should be deleted
+        assert not (sub / 'dup_copy.jpg').exists()

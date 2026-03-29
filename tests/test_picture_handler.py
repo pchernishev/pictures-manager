@@ -309,6 +309,24 @@ class TestCreateParserConvertDb:
         assert args.convert_db is True
 
 
+class TestCreateParserMergeDb:
+
+    def test_merge_db_flag_default_none(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(['--src', '/s', '--dst', '/d'])
+        assert args.merge_db is None
+
+    def test_merge_db_flag_set(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(['--src', '/s', '--dst', '/d', '--merge-db', '/path/to/db.txt'])
+        assert args.merge_db == '/path/to/db.txt'
+
+    def test_merge_db_short_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(['--src', '/s', '--dst', '/d', '--mdb', '/path/to/db.txt'])
+        assert args.merge_db == '/path/to/db.txt'
+
+
 class TestMoveByMonth:
 
     def _create_test_image(self, path: Path) -> None:

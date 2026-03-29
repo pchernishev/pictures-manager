@@ -606,3 +606,157 @@ def move_files(folder: str, new_folder: str, regex_pattern: str = r'.*\.\w{2,4}'
     if not dry_run:
         save_db_files(old_folder_db_files, folder)
         save_db_files(new_folder_db_files, str(dest_folder))
+
+
+def _increment_filename_suffix(name: str, existing_names: set[str]) -> str:
+    stem = Path(name).stem
+    ext = Path(name).suffix
+    # Expected format: YYYYMMDD_HHMMSS_NNN
+    parts = stem.rsplit('_', 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        base = parts[0]
+        current_suffix = int(parts[1])
+        width = len(parts[1])
+    else:
+        base = stem
+        current_suffix = 0
+        width = 3
+
+    candidate_suffix = current_suffix + 1
+    while True:
+        candidate = f'{base}_{candidate_suffix:0{width}d}{ext}'
+        if candidate not in existing_names:
+            return candidate
+        candidate_suffix += 1
+
+
+def merge_dbs(folder: str, db_b_path: str, dry_run: bool = True,
+              logger_func: Callable[..., None] | None = None) -> dict[str, dict]:
+    import filecmp
+
+    if not logger_func:
+        logger_func = print
+
+    folder_path = Path(folder)
+    db_b_file = Path(db_b_path)
+
+    if not folder_path.exists():
+        logger_func(f'Folder does not exist: {folder}')
+        return {}
+
+    if not db_b_file.exists():
+        logger_func(f'Second DB file does not exist: {db_b_path}')
+        return {}
+
+    db_a = load_db_files(folder)
+    try:
+        db_b: dict[str, dict] = json.loads(db_b_file.read_text(encoding='utf-8'))
+    except (json.JSONDecodeError, OSError) as e:
+        logger_func(f'Error reading second DB: {e}')
+        return {}
+
+    if not db_b:
+        logger_func('Second DB is empty, nothing to merge')
+        return db_a
+
+    # Build file lookup: filename -> list of paths (handles OS-renamed duplicates)
+    file_lookup: dict[str, Path] = {}
+    size_lookup: defaultdict[int, list[Path]] = defaultdict(list)
+    for f in folder_path.rglob('*'):
+        if f.is_file() and f.name != DB_NAME:
+            file_lookup[f.name] = f
+            try:
+                size_lookup[f.stat().st_size].append(f)
+            except OSError:
+                pass
+
+    # Track all known names to avoid collisions when generating new keys
+    all_names: set[str] = set(db_a.keys()) | set(file_lookup.keys())
+
+    merged = 0
+    duplicates = 0
+    renamed = 0
+
+    for key_b, entry_b in db_b.items():
+        if key_b not in db_a:
+            db_a[key_b] = entry_b
+            all_names.add(key_b)
+            merged += 1
+            continue
+
+        entry_a = db_a[key_b]
+        size_a = entry_a.get('size', -1)
+        size_b = entry_b.get('size', -2)
+
+        if size_a == size_b:
+            # Same key + same size — check if truly identical via binary compare
+            path_on_disk = file_lookup.get(key_b)
+            # Find a second file with the same size that could be B's copy
+            candidates = [p for p in size_lookup.get(size_b, [])
+                          if p.name != key_b or p != path_on_disk]
+            is_duplicate = False
+            dup_path: Path | None = None
+
+            if path_on_disk and path_on_disk.exists():
+                if candidates:
+                    for cand in candidates:
+                        try:
+                            if filecmp.cmp(str(path_on_disk), str(cand), shallow=False):
+                                is_duplicate = True
+                                dup_path = cand
+                                break
+                        except OSError:
+                            continue
+                else:
+                    # Only one copy on disk — already deduplicated
+                    is_duplicate = True
+
+            if is_duplicate:
+                logger_func(f'Duplicate: "{key_b}" (same key, same size, same content) — keeping one')
+                if dup_path and not dry_run:
+                    dup_path.unlink()
+                    logger_func(f'  Deleted duplicate file: {dup_path}')
+                duplicates += 1
+            else:
+                # Same size but different content — treat as conflict, keep both
+                new_key = _increment_filename_suffix(key_b, all_names)
+                logger_func(f'Conflict: "{key_b}" (same size, different content) — renaming to "{new_key}"')
+                db_a[new_key] = entry_b
+                all_names.add(new_key)
+                renamed += 1
+                if candidates and not dry_run:
+                    cand = candidates[0]
+                    new_path = cand.parent / new_key
+                    shutil.move(str(cand), str(new_path))
+                    file_lookup[new_key] = new_path
+                    logger_func(f'  Renamed file: {cand.name} -> {new_key}')
+        else:
+            # Different size — definitely different files, keep both
+            new_key = _increment_filename_suffix(key_b, all_names)
+            logger_func(f'Conflict: "{key_b}" (different size: {size_a} vs {size_b}) — renaming to "{new_key}"')
+            db_a[new_key] = entry_b
+            all_names.add(new_key)
+            renamed += 1
+            # Find B's file on disk by its size among candidates
+            b_candidates = [p for p in size_lookup.get(size_b, [])
+                            if p != file_lookup.get(key_b)]
+            if b_candidates and not dry_run:
+                cand = b_candidates[0]
+                new_path = cand.parent / new_key
+                shutil.move(str(cand), str(new_path))
+                file_lookup[new_key] = new_path
+                logger_func(f'  Renamed file: {cand.name} -> {new_key}')
+
+    logger_func(f'\nMerge summary:')
+    logger_func(f'  Merged directly: {merged}')
+    logger_func(f'  Duplicates (kept one): {duplicates}')
+    logger_func(f'  Conflicts (renamed): {renamed}')
+    logger_func(f'  Total entries in merged DB: {len(db_a)}')
+
+    if dry_run:
+        logger_func('[DRY RUN] No changes made')
+    else:
+        save_db_files(db_a, folder)
+        logger_func('Merged DB saved')
+
+    return db_a

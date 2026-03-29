@@ -34,6 +34,10 @@ def main() -> None:
         utils.convert_db(str(handler.dst), dry_run=args.dry_run, logger_func=logger.info)
         return
 
+    if args.merge_db:
+        utils.merge_dbs(str(handler.dst), args.merge_db, dry_run=args.dry_run, logger_func=logger.info)
+        return
+
     if args.sync:
         utils.sync_folder_and_db(str(handler.dst), handler.recursive, handler.dry_run, logger.info)
         return
@@ -109,6 +113,10 @@ def create_parser() -> ArgumentParser:
                         help='Write folder comparison report to this file path')
     parser.add_argument('--convert-db', '--cdb', dest='convert_db', action='store_true', default=False,
                         help='Convert DB from old format (full paths) to new format (filenames + size)')
+    parser.add_argument('--merge-db', '--mdb', dest='merge_db', type=str, default=None,
+                        metavar='DB_FILE',
+                        help='Merge a second DB file into the destination DB. '
+                        'Handles duplicates (binary compare, keep one) and conflicts (rename with suffix increment)')
     return parser
 
 
