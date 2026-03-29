@@ -44,7 +44,9 @@ def main() -> None:
         return
 
     if args.find_duplicates:
-        utils.find_duplicates(str(handler.dst), delete=args.delete_duplicates, logger_func=logger.info)
+        utils.find_duplicates(str(handler.dst), delete=args.delete_duplicates,
+                              keep_strategy=args.keep_strategy, keep_folder=args.keep_folder,
+                              logger_func=logger.info)
         return
 
     if args.compare_folders:
@@ -86,6 +88,14 @@ def create_parser() -> ArgumentParser:
                         help='Scan destination folder and subfolders for duplicate media files (dry run by default)')
     parser.add_argument('--delete-duplicates', '--dd', dest='delete_duplicates', action='store_true', default=False,
                         help='Actually delete duplicate media files found by --find-duplicates (keeps one copy)')
+    parser.add_argument('--keep-strategy', '--ks', dest='keep_strategy', type=str, default=None,
+                        choices=['folder_priority', 'shortest_path', 'oldest'],
+                        help='Strategy for choosing which duplicate to keep: '
+                        'folder_priority (keep files in --keep-folder), '
+                        'shortest_path (keep shallowest file), '
+                        'oldest (keep file with earliest modification time)')
+    parser.add_argument('--keep-folder', '--kf', dest='keep_folder', type=str, default=None,
+                        help='Preferred folder path for folder_priority strategy (files here are kept)')
     parser.add_argument('--compare-folders', '--cf', dest='compare_folders', type=str, nargs=2, default=None,
                         metavar=('FOLDER_A', 'FOLDER_B'),
                         help='Compare two folders and report differences (files only in A, only in B, optionally different content)')

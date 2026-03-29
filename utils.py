@@ -275,7 +275,39 @@ def _write_duplicate_report_html(groups: list[list[str]], output_path: str) -> N
     Path(output_path).write_text('\n'.join(html_parts), encoding='utf-8')
 
 
+KEEP_STRATEGIES = ['folder_priority', 'shortest_path', 'oldest']
+
+
+def _apply_keep_strategy(group: list[str], strategy: str | None = None,
+                         keep_folder: str | None = None) -> list[str]:
+    if not strategy or len(group) <= 1:
+        return group
+
+    if strategy == 'folder_priority' and keep_folder:
+        keep_path = Path(keep_folder).resolve()
+        in_preferred = [f for f in group if Path(f).resolve().is_relative_to(keep_path)]
+        outside = [f for f in group if f not in in_preferred]
+        if in_preferred:
+            return [in_preferred[0]] + in_preferred[1:] + outside
+        return group
+
+    if strategy == 'shortest_path':
+        return sorted(group, key=lambda f: len(Path(f).parts))
+
+    if strategy == 'oldest':
+        def _get_mtime(f: str) -> float:
+            try:
+                return Path(f).stat().st_mtime
+            except OSError:
+                return float('inf')
+        return sorted(group, key=_get_mtime)
+
+    return group
+
+
 def find_duplicates(folder: str, delete: bool = False,
+                    keep_strategy: str | None = None,
+                    keep_folder: str | None = None,
                     logger_func: Callable[..., None] | None = None) -> list[list[str]]:
     import filecmp
     import regex_patterns
@@ -287,9 +319,19 @@ def find_duplicates(folder: str, delete: bool = False,
         logger_func(f'Folder does not exist: {folder}')
         return []
 
+    if keep_strategy and keep_strategy not in KEEP_STRATEGIES:
+        logger_func(f'Unknown keep strategy: {keep_strategy}. '
+                    f'Available: {", ".join(KEEP_STRATEGIES)}')
+        return []
+
+    if keep_strategy == 'folder_priority' and not keep_folder:
+        logger_func('--keep-folder is required when using folder_priority strategy')
+        return []
+
     media_extensions = set(regex_patterns.PHOTO_FILE_EXTENSIONS + regex_patterns.VIDEO_FILE_EXTENSIONS)
 
-    logger_func('Scanning for duplicate media files...')
+    strategy_label = f' (strategy: {keep_strategy})' if keep_strategy else ''
+    logger_func(f'Scanning for duplicate media files...{strategy_label}')
     all_files = list(folder_path.rglob('*'))
     media_files = [f for f in all_files if f.is_file()
                    and f.suffix.lstrip('.').lower() in media_extensions]
@@ -335,7 +377,9 @@ def find_duplicates(folder: str, delete: bool = False,
                 compared.append([path_a])
         for group in compared:
             if len(group) > 1:
-                duplicate_groups.append([str(p) for p in group])
+                raw_group = [str(p) for p in group]
+                ordered = _apply_keep_strategy(raw_group, keep_strategy, keep_folder)
+                duplicate_groups.append(ordered)
 
     total_redundant = sum(len(g) - 1 for g in duplicate_groups)
     total_wasted = 0

@@ -343,6 +343,98 @@ class TestFindDuplicates:
         assert all(f.endswith('.jpg') for f in all_files_in_groups)
 
 
+class TestKeepStrategies:
+
+    def test_folder_priority_keeps_preferred_folder(self, tmp_path) -> None:
+        preferred = tmp_path / 'keep_here'
+        other = tmp_path / 'other'
+        preferred.mkdir()
+        other.mkdir()
+        (preferred / 'photo.jpg').write_bytes(b'\xff\xd8\xff same data')
+        (other / 'photo_copy.jpg').write_bytes(b'\xff\xd8\xff same data')
+        groups = utils.find_duplicates(str(tmp_path), delete=True,
+                                       keep_strategy='folder_priority',
+                                       keep_folder=str(preferred),
+                                       logger_func=lambda x: None)
+        assert len(groups) == 1
+        assert (preferred / 'photo.jpg').exists()
+        assert not (other / 'photo_copy.jpg').exists()
+
+    def test_folder_priority_no_match_keeps_first(self, tmp_path) -> None:
+        sub1 = tmp_path / 'sub1'
+        sub2 = tmp_path / 'sub2'
+        sub1.mkdir()
+        sub2.mkdir()
+        (sub1 / 'a.jpg').write_bytes(b'\xff\xd8\xff same')
+        (sub2 / 'b.jpg').write_bytes(b'\xff\xd8\xff same')
+        groups = utils.find_duplicates(str(tmp_path), delete=False,
+                                       keep_strategy='folder_priority',
+                                       keep_folder=str(tmp_path / 'nonexistent'),
+                                       logger_func=lambda x: None)
+        assert len(groups) == 1
+        # Both still exist (dry run), group order unchanged since no match
+        assert (sub1 / 'a.jpg').exists()
+        assert (sub2 / 'b.jpg').exists()
+
+    def test_shortest_path_keeps_shallowest(self, tmp_path) -> None:
+        deep = tmp_path / 'a' / 'b' / 'c'
+        deep.mkdir(parents=True)
+        (tmp_path / 'photo.jpg').write_bytes(b'\xff\xd8\xff same data here')
+        (deep / 'photo_deep.jpg').write_bytes(b'\xff\xd8\xff same data here')
+        groups = utils.find_duplicates(str(tmp_path), delete=True,
+                                       keep_strategy='shortest_path',
+                                       logger_func=lambda x: None)
+        assert len(groups) == 1
+        assert (tmp_path / 'photo.jpg').exists()
+        assert not (deep / 'photo_deep.jpg').exists()
+
+    def test_oldest_keeps_oldest_file(self, tmp_path) -> None:
+        import time
+        old_file = tmp_path / 'old.jpg'
+        old_file.write_bytes(b'\xff\xd8\xff same content')
+        import os
+        os.utime(str(old_file), (1000000, 1000000))
+        time.sleep(0.05)
+        new_file = tmp_path / 'new.jpg'
+        new_file.write_bytes(b'\xff\xd8\xff same content')
+        groups = utils.find_duplicates(str(tmp_path), delete=True,
+                                       keep_strategy='oldest',
+                                       logger_func=lambda x: None)
+        assert len(groups) == 1
+        assert old_file.exists()
+        assert not new_file.exists()
+
+    def test_unknown_strategy_returns_empty(self, tmp_path) -> None:
+        (tmp_path / 'a.jpg').write_bytes(b'\xff\xd8\xff same')
+        (tmp_path / 'b.jpg').write_bytes(b'\xff\xd8\xff same')
+        logs: list[str] = []
+        groups = utils.find_duplicates(str(tmp_path), delete=False,
+                                       keep_strategy='bogus',
+                                       logger_func=logs.append)
+        assert groups == []
+        assert any('Unknown keep strategy' in log for log in logs)
+
+    def test_folder_priority_without_keep_folder_returns_empty(self, tmp_path) -> None:
+        (tmp_path / 'a.jpg').write_bytes(b'\xff\xd8\xff same')
+        (tmp_path / 'b.jpg').write_bytes(b'\xff\xd8\xff same')
+        logs: list[str] = []
+        groups = utils.find_duplicates(str(tmp_path), delete=False,
+                                       keep_strategy='folder_priority',
+                                       keep_folder=None,
+                                       logger_func=logs.append)
+        assert groups == []
+        assert any('--keep-folder is required' in log for log in logs)
+
+    def test_no_strategy_keeps_default_order(self, tmp_path) -> None:
+        (tmp_path / 'a.jpg').write_bytes(b'\xff\xd8\xff same')
+        (tmp_path / 'b.jpg').write_bytes(b'\xff\xd8\xff same')
+        groups = utils.find_duplicates(str(tmp_path), delete=False,
+                                       keep_strategy=None,
+                                       logger_func=lambda x: None)
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+
 class TestCompareFolders:
 
     def test_identical_folders(self, tmp_path) -> None:
