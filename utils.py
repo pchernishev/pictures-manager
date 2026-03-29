@@ -372,6 +372,122 @@ def find_duplicates(folder: str, delete: bool = False,
     return duplicate_groups
 
 
+def compare_folders(folder_a: str, folder_b: str, output_file: str | None = None,
+                    compare_content: bool = False,
+                    logger_func: Callable[..., None] | None = None) -> dict[str, list[str]]:
+    import filecmp
+
+    if not logger_func:
+        logger_func = print
+
+    path_a = Path(folder_a)
+    path_b = Path(folder_b)
+    for label, p in [('Folder A', path_a), ('Folder B', path_b)]:
+        if not p.exists():
+            logger_func(f'{label} does not exist: {p}')
+            return {'only_in_a': [], 'only_in_b': [], 'different_content': []}
+
+    def _collect_relative_files(root: Path) -> dict[str, Path]:
+        result: dict[str, Path] = {}
+        for f in root.rglob('*'):
+            if f.is_file() and f.name != DB_NAME:
+                rel = str(f.relative_to(root))
+                result[rel] = f
+        return result
+
+    logger_func(f'Scanning folder A: {folder_a}')
+    files_a = _collect_relative_files(path_a)
+    logger_func(f'Scanning folder B: {folder_b}')
+    files_b = _collect_relative_files(path_b)
+
+    keys_a = set(files_a.keys())
+    keys_b = set(files_b.keys())
+
+    only_in_a = sorted(keys_a - keys_b)
+    only_in_b = sorted(keys_b - keys_a)
+    common = sorted(keys_a & keys_b)
+
+    different_content: list[str] = []
+    if compare_content and common:
+        try:
+            from tqdm import tqdm
+            common_iter = tqdm(common, desc='Comparing content', unit='file')
+        except ImportError:
+            common_iter = common
+
+        for rel in common_iter:
+            fa = files_a[rel]
+            fb = files_b[rel]
+            if fa.stat().st_size != fb.stat().st_size:
+                different_content.append(rel)
+            else:
+                try:
+                    if not filecmp.cmp(str(fa), str(fb), shallow=False):
+                        different_content.append(rel)
+                except OSError:
+                    different_content.append(rel)
+
+    result = {
+        'only_in_a': only_in_a,
+        'only_in_b': only_in_b,
+        'different_content': different_content,
+    }
+
+    logger_func(f'\n=== Folder Comparison Results ===')
+    logger_func(f'Folder A: {folder_a} ({len(files_a)} files)')
+    logger_func(f'Folder B: {folder_b} ({len(files_b)} files)')
+    logger_func(f'Common files: {len(common)}')
+
+    logger_func(f'\n--- Only in A ({len(only_in_a)} files) ---')
+    for f in only_in_a:
+        logger_func(f'  {f}')
+
+    logger_func(f'\n--- Only in B ({len(only_in_b)} files) ---')
+    for f in only_in_b:
+        logger_func(f'  {f}')
+
+    if compare_content:
+        logger_func(f'\n--- Different content ({len(different_content)} files) ---')
+        for f in different_content:
+            logger_func(f'  {f}')
+
+    if output_file:
+        _write_compare_report(result, folder_a, folder_b, len(files_a), len(files_b),
+                              len(common), output_file)
+        logger_func(f'\nReport written to {output_file}')
+
+    return result
+
+
+def _write_compare_report(result: dict[str, list[str]], folder_a: str, folder_b: str,
+                          count_a: int, count_b: int, common_count: int,
+                          output_path: str) -> None:
+    lines: list[str] = [
+        'Folder Comparison Report',
+        '=' * 60,
+        f'Folder A: {folder_a} ({count_a} files)',
+        f'Folder B: {folder_b} ({count_b} files)',
+        f'Common files: {common_count}',
+        '',
+        f'Only in A ({len(result["only_in_a"])} files)',
+        '-' * 40,
+    ]
+    for f in result['only_in_a']:
+        lines.append(f'  {f}')
+    lines.append('')
+    lines.append(f'Only in B ({len(result["only_in_b"])} files)')
+    lines.append('-' * 40)
+    for f in result['only_in_b']:
+        lines.append(f'  {f}')
+    if result['different_content']:
+        lines.append('')
+        lines.append(f'Different content ({len(result["different_content"])} files)')
+        lines.append('-' * 40)
+        for f in result['different_content']:
+            lines.append(f'  {f}')
+    Path(output_path).write_text('\n'.join(lines), encoding='utf-8')
+
+
 def move_files(folder: str, new_folder: str, regex_pattern: str = r'.*\.\w{2,4}',
                create_subfolder: bool = True, dry_run: bool = True) -> None:
     db_files = load_db_files(folder)

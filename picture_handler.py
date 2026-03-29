@@ -47,6 +47,13 @@ def main() -> None:
         utils.find_duplicates(str(handler.dst), delete=args.delete_duplicates, logger_func=logger.info)
         return
 
+    if args.compare_folders:
+        utils.compare_folders(args.compare_folders[0], args.compare_folders[1],
+                              output_file=args.compare_output,
+                              compare_content=args.compare_content,
+                              logger_func=logger.info)
+        return
+
     handler.handle()
     handler.output()
     logger.info('Handling finished\n')
@@ -79,6 +86,13 @@ def create_parser() -> ArgumentParser:
                         help='Scan destination folder and subfolders for duplicate media files (dry run by default)')
     parser.add_argument('--delete-duplicates', '--dd', dest='delete_duplicates', action='store_true', default=False,
                         help='Actually delete duplicate media files found by --find-duplicates (keeps one copy)')
+    parser.add_argument('--compare-folders', '--cf', dest='compare_folders', type=str, nargs=2, default=None,
+                        metavar=('FOLDER_A', 'FOLDER_B'),
+                        help='Compare two folders and report differences (files only in A, only in B, optionally different content)')
+    parser.add_argument('--compare-content', '--cc', dest='compare_content', action='store_true', default=False,
+                        help='When comparing folders, also compare file content for files present in both')
+    parser.add_argument('--compare-output', '--co', dest='compare_output', type=str, default=None,
+                        help='Write folder comparison report to this file path')
     return parser
 
 

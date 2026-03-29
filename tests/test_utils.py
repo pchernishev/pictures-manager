@@ -4,6 +4,7 @@ import os
 import json
 import pytest
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -340,3 +341,121 @@ class TestFindDuplicates:
         # Only jpg files in the group, not pdf
         all_files_in_groups = [f for g in groups for f in g]
         assert all(f.endswith('.jpg') for f in all_files_in_groups)
+
+
+class TestCompareFolders:
+
+    def test_identical_folders(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'photo.jpg').write_text('same')
+        (b / 'photo.jpg').write_text('same')
+        logs: list[str] = []
+        result = utils.compare_folders(str(a), str(b), logger_func=logs.append)
+        assert result['only_in_a'] == []
+        assert result['only_in_b'] == []
+
+    def test_files_only_in_a(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'unique.jpg').write_text('only in a')
+        (a / 'common.jpg').write_text('shared')
+        (b / 'common.jpg').write_text('shared')
+        result = utils.compare_folders(str(a), str(b), logger_func=lambda x: None)
+        assert 'unique.jpg' in result['only_in_a']
+        assert result['only_in_b'] == []
+
+    def test_files_only_in_b(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'common.jpg').write_text('shared')
+        (b / 'common.jpg').write_text('shared')
+        (b / 'extra.png').write_text('only in b')
+        result = utils.compare_folders(str(a), str(b), logger_func=lambda x: None)
+        assert result['only_in_a'] == []
+        assert 'extra.png' in result['only_in_b']
+
+    def test_both_have_unique_files(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'only_a.jpg').write_text('a')
+        (b / 'only_b.jpg').write_text('b')
+        result = utils.compare_folders(str(a), str(b), logger_func=lambda x: None)
+        assert 'only_a.jpg' in result['only_in_a']
+        assert 'only_b.jpg' in result['only_in_b']
+
+    def test_compare_content_detects_differences(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'photo.jpg').write_text('version 1')
+        (b / 'photo.jpg').write_text('version 2')
+        result = utils.compare_folders(str(a), str(b), compare_content=True,
+                                       logger_func=lambda x: None)
+        assert 'photo.jpg' in result['different_content']
+
+    def test_compare_content_false_skips_content_check(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'photo.jpg').write_text('version 1')
+        (b / 'photo.jpg').write_text('version 2')
+        result = utils.compare_folders(str(a), str(b), compare_content=False,
+                                       logger_func=lambda x: None)
+        assert result['different_content'] == []
+
+    def test_recursive_subfolder_comparison(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        (a / 'sub').mkdir(parents=True)
+        (b / 'sub').mkdir(parents=True)
+        (a / 'sub' / 'deep.jpg').write_text('deep')
+        (b / 'root.jpg').write_text('root')
+        result = utils.compare_folders(str(a), str(b), logger_func=lambda x: None)
+        only_a = result['only_in_a']
+        only_b = result['only_in_b']
+        assert any('deep.jpg' in f for f in only_a)
+        assert 'root.jpg' in only_b
+
+    def test_writes_output_file(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        (a / 'only_a.txt').write_text('a')
+        (b / 'only_b.txt').write_text('b')
+        report = str(tmp_path / 'report.txt')
+        utils.compare_folders(str(a), str(b), output_file=report, logger_func=lambda x: None)
+        assert Path(report).exists()
+        content = Path(report).read_text()
+        assert 'only_a.txt' in content
+        assert 'only_b.txt' in content
+        assert 'Folder Comparison Report' in content
+
+    def test_nonexistent_folder_returns_empty(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        a.mkdir()
+        logs: list[str] = []
+        result = utils.compare_folders(str(a), str(tmp_path / 'nope'), logger_func=logs.append)
+        assert result == {'only_in_a': [], 'only_in_b': [], 'different_content': []}
+        assert any('does not exist' in log for log in logs)
+
+    def test_empty_folders(self, tmp_path) -> None:
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+        result = utils.compare_folders(str(a), str(b), logger_func=lambda x: None)
+        assert result['only_in_a'] == []
+        assert result['only_in_b'] == []
+        assert result['different_content'] == []
