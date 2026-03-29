@@ -13,7 +13,7 @@ from logger import logger
 DB_NAME = 'files.txt'
 
 
-def load_db_files(folder: str, db_name: str = DB_NAME) -> dict[str, str]:
+def load_db_files(folder: str, db_name: str = DB_NAME) -> dict[str, dict]:
     db_path = Path(folder) / db_name
     if not db_path.exists():
         return {}
@@ -23,10 +23,78 @@ def load_db_files(folder: str, db_name: str = DB_NAME) -> dict[str, str]:
     return files_in_db
 
 
-def save_db_files(files: dict[str, str], folder: str, db_name: str = DB_NAME) -> None:
+def save_db_files(files: dict[str, dict], folder: str, db_name: str = DB_NAME) -> None:
     db_path = Path(folder) / db_name
     with open(db_path, 'w') as f:
         json.dump(files, f, indent=4)
+
+
+def is_old_db_format(db_files: dict) -> bool:
+    if not db_files:
+        return False
+    first_value = next(iter(db_files.values()))
+    return isinstance(first_value, str)
+
+
+def convert_db(folder: str, dry_run: bool = True,
+               logger_func: Callable[..., None] | None = None) -> dict[str, dict]:
+    if not logger_func:
+        logger_func = print
+
+    folder_path = Path(folder)
+    if not folder_path.exists():
+        logger_func(f'Folder does not exist: {folder}')
+        return {}
+
+    db_files = load_db_files(folder)
+    if not db_files:
+        logger_func('DB is empty, nothing to convert')
+        return {}
+
+    if not is_old_db_format(db_files):
+        logger_func('DB is already in new format')
+        return db_files
+
+    new_db: dict[str, dict] = {}
+    collisions = 0
+    missing_files = 0
+
+    for src_path, dst_path in db_files.items():
+        src_name = Path(src_path).name
+        dst_name = Path(dst_path).name
+
+        dst_file = Path(dst_path)
+        if dst_file.exists():
+            size = dst_file.stat().st_size
+        else:
+            found = list(folder_path.rglob(dst_name))
+            if found:
+                size = found[0].stat().st_size
+            else:
+                size = 0
+                missing_files += 1
+                logger_func(f'Warning: file not found for size lookup: {dst_name}')
+
+        if src_name in new_db:
+            logger_func(f'Warning: duplicate source name "{src_name}", overwriting')
+            collisions += 1
+
+        new_db[src_name] = {
+            'new_name': dst_name,
+            'size': size
+        }
+
+    logger_func(f'Converted {len(new_db)} entries'
+                f'{f" ({collisions} collisions)" if collisions else ""}'
+                f'{f" ({missing_files} files not found)" if missing_files else ""}')
+
+    if not dry_run:
+        save_db_files(new_db, folder)
+        logger_func('DB saved in new format')
+    else:
+        logger_func('[DRY RUN] DB would be saved in new format')
+
+    return new_db
 
 
 def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True,
@@ -35,7 +103,6 @@ def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True
         logger_func = print
     files_in_db = load_db_files(folder)
     files_in_folder: defaultdict[str, dict] = defaultdict(dict)
-    files_in_db_modified: defaultdict[str, dict] = defaultdict(dict)
     sizes: defaultdict[int, list[str]] = defaultdict(list)
     folder_path = Path(folder)
     for path, subdirs, files in os.walk(folder_path):
@@ -50,22 +117,17 @@ def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True
     logger_func(f'files in folder: {len(files_in_folder)}, sizes: {len(sizes)}')
     logger_func(f'files in DB: {len(files_in_db)}')
 
-    for key, value in files_in_db.items():
-        key_path = Path(key)
-        value_path = Path(value)
-        files_in_db_modified[value_path.name] = {'old_path': str(key_path.parent),
-                                                  'old_name': key_path.name,
-                                                  'new_path': str(value_path.parent),
-                                                  'new_name': value_path.name
-                                                  }
-    def get_missing_in_folder() -> set[str]:
-        return set(files_in_db_modified.keys()) - set(files_in_folder.keys())
+    # Build mapping: new_name -> source_key for lookup
+    new_name_to_src: dict[str, str] = {}
+    for src_name, entry in files_in_db.items():
+        new_name = entry['new_name']
+        new_name_to_src[new_name] = src_name
 
-    def get_missing_in_db() -> set[str]:
-        return set(files_in_folder.keys()) - set(files_in_db_modified.keys())
+    db_new_names = set(new_name_to_src.keys())
+    folder_names = set(files_in_folder.keys())
 
-    missing_in_folder = get_missing_in_folder()
-    missing_in_db = get_missing_in_db()
+    missing_in_folder = sorted(db_new_names - folder_names)
+    missing_in_db = sorted(folder_names - db_new_names)
 
     def output_missing_files() -> None:
         logger_func(f'Number of missing_in_folder: {len(missing_in_folder)}')
@@ -81,9 +143,9 @@ def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True
     if dry_run:
         return
 
-    for f in missing_in_folder:
-        key_to_delete = files_in_db_modified[f]
-        del files_in_db[str(Path(key_to_delete['old_path']) / key_to_delete['old_name'])]
+    for new_name in missing_in_folder:
+        src_key = new_name_to_src[new_name]
+        del files_in_db[src_key]
 
     save_db_files(files_in_db, folder)
 
@@ -99,7 +161,6 @@ def organize_by_year(folder: str, dry_run: bool = True, by_month: bool = False,
         logger_func(f'Folder does not exist: {folder}')
         return
 
-    db_files = load_db_files(folder)
     moved_count = 0
     skipped_count = 0
 
@@ -148,15 +209,8 @@ def organize_by_year(folder: str, dry_run: bool = True, by_month: bool = False,
                 continue
             shutil.move(str(file_path_item), str(new_path))
 
-            for src_key, dst_value in list(db_files.items()):
-                if Path(dst_value) == file_path_item:
-                    db_files[src_key] = str(new_path)
-
         moved_count += 1
         logger_func(f'{"[DRY RUN] " if dry_run else ""}Moved {file_path_item.name} -> {rel_target}')
-
-    if not dry_run and moved_count > 0:
-        save_db_files(db_files, folder)
 
     mode = 'year/month' if by_month else 'year'
     logger_func(f'Organize by {mode}: {moved_count} files {"would be " if dry_run else ""}moved, '
@@ -535,24 +589,30 @@ def _write_compare_report(result: dict[str, list[str]], folder_a: str, folder_b:
 def move_files(folder: str, new_folder: str, regex_pattern: str = r'.*\.\w{2,4}',
                create_subfolder: bool = True, dry_run: bool = True) -> None:
     db_files = load_db_files(folder)
-    new_folder_db_files: dict[str, str] = {}
+    new_folder_db_files: dict[str, dict] = {}
     old_folder_db_files = dict(db_files)
     folder_path = Path(folder)
     dest_folder = folder_path / new_folder if create_subfolder else Path(new_folder)
     if not dest_folder.exists():
         dest_folder.mkdir(parents=True)
 
+    # Build lookup: new_name -> file path on disk
+    file_lookup: dict[str, Path] = {}
+    for f in folder_path.rglob('*'):
+        if f.is_file() and f.name != DB_NAME:
+            file_lookup[f.name] = f
+
     print(regex_pattern)
     regex = re.compile(regex_pattern)
-    for source_name, current_name in db_files.items():
-        old_basename = Path(source_name).name
-        new_basename = Path(current_name).name
-        if regex.match(old_basename):
-            new_name = str(dest_folder / new_basename)
-            new_folder_db_files[source_name] = new_name
+    for source_name, entry in db_files.items():
+        if regex.match(source_name):
+            new_name = entry['new_name']
+            new_folder_db_files[source_name] = entry
             del old_folder_db_files[source_name]
             if not dry_run:
-                shutil.move(current_name, new_name)
+                current_path = file_lookup.get(new_name)
+                if current_path:
+                    shutil.move(str(current_path), str(dest_folder / new_name))
 
     logger.info(json.dumps(new_folder_db_files, indent=4))
     logger.info(f'handled files names {len(new_folder_db_files)}')

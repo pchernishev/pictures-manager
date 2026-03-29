@@ -30,6 +30,10 @@ def main() -> None:
     handler = PicturesHandler(args.src, args.dst, comparers=args.compare, ignore_regexs=args.ignore,
                               dry_run=args.dry_run, recursive=args.recursive, accept_regexs=args.accept,
                               by_month=args.by_month)
+    if args.convert_db:
+        utils.convert_db(str(handler.dst), dry_run=args.dry_run, logger_func=logger.info)
+        return
+
     if args.sync:
         utils.sync_folder_and_db(str(handler.dst), handler.recursive, handler.dry_run, logger.info)
         return
@@ -103,6 +107,8 @@ def create_parser() -> ArgumentParser:
                         help='When comparing folders, also compare file content for files present in both')
     parser.add_argument('--compare-output', '--co', dest='compare_output', type=str, default=None,
                         help='Write folder comparison report to this file path')
+    parser.add_argument('--convert-db', '--cdb', dest='convert_db', action='store_true', default=False,
+                        help='Convert DB from old format (full paths) to new format (filenames + size)')
     return parser
 
 
@@ -146,7 +152,7 @@ class PicturesHandler:
 
         self.acceptable_regexs = [re.compile(rf'{regex}') for regex in accept_regexs] if accept_regexs else []
 
-        self.db_files: dict[str, str] = {}
+        self.db_files: dict[str, dict] = {}
         self.all_handled_names: list[str] = []
         self.ignored: list[str] = []
         self.sizes_files: defaultdict[int, list[str]] = defaultdict(list)
@@ -158,7 +164,7 @@ class PicturesHandler:
         self.destination_not_matched: list[str] = []
         self.ready_to_add: defaultdict[str, list[dict]] = defaultdict(list)
         self.added_files: list[str] = []
-        self.moved: dict[str, str] = {}
+        self.moved: dict[str, dict] = {}
         self.unmoved: dict[str, str] = {}
         self.not_deleted: list[tuple[str, str]] = []
         self.min_date_taken: list[tuple[str, dict]] = []
@@ -240,8 +246,8 @@ class PicturesHandler:
 
     def _load_db(self) -> None:
         self.db_files = utils.load_db_files(str(self.dst))
-        for src, dst in self.db_files.items():
-            self.all_handled_names += [Path(src).name, Path(dst).name]
+        for src_name, entry in self.db_files.items():
+            self.all_handled_names += [src_name, entry['new_name']]
 
     def _delete_not_added(self) -> None:
         for f in self.not_passed_comparison:
@@ -468,7 +474,10 @@ class PicturesHandler:
                     self.unmoved[str(full_path)] = f'Exists {new_file_path}'
                     continue
                 move(str(full_path), str(new_file_path))
-                self.moved[str(full_path)] = str(new_file_path)
+                self.moved[f['file']] = {
+                    'new_name': new_file_path.name,
+                    'size': f['size']
+                }
             except OSError as e:
                 self.unmoved[str(full_path)] = f'Error {e.__class__.__name__} {e}'
 

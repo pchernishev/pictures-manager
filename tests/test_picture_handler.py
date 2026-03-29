@@ -185,8 +185,10 @@ class TestMoveFlow:
         handler.handle()
         assert not img_file.exists()
         assert len(handler.moved) == 1
-        moved_dst = list(handler.moved.values())[0]
-        assert Path(moved_dst).exists()
+        moved_entry = list(handler.moved.values())[0]
+        assert 'new_name' in moved_entry
+        assert 'size' in moved_entry
+        assert moved_entry['size'] > 0
 
     def test_move_places_file_in_year_subfolder(self, tmp_path) -> None:
         src = tmp_path / 'src'
@@ -198,11 +200,12 @@ class TestMoveFlow:
         handler = PicturesHandler(str(src), str(dst), dry_run=False)
         handler.handle()
         assert len(handler.moved) == 1
-        moved_dst = list(handler.moved.values())[0]
-        moved_path = Path(moved_dst)
-        assert moved_path.exists()
-        # File should be in a year subfolder (4-digit parent dir name)
-        assert re.match(r'^\d{4}$', moved_path.parent.name)
+        moved_entry = list(handler.moved.values())[0]
+        new_name = moved_entry['new_name']
+        # Find the file on disk - should be in a year subfolder
+        found = list(dst.rglob(new_name))
+        assert len(found) == 1
+        assert re.match(r'^\d{4}$', found[0].parent.name)
 
 
 class TestHandleDestinationWithYearFolders:
@@ -289,6 +292,24 @@ class TestCreateParserOrganizeByYear:
         assert args.delete_duplicates is True
 
 
+class TestCreateParserConvertDb:
+
+    def test_convert_db_flag_default_false(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(['--src', '/s', '--dst', '/d'])
+        assert args.convert_db is False
+
+    def test_convert_db_flag_set(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(['--src', '/s', '--dst', '/d', '--convert-db'])
+        assert args.convert_db is True
+
+    def test_convert_db_short_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(['--src', '/s', '--dst', '/d', '--cdb'])
+        assert args.convert_db is True
+
+
 class TestMoveByMonth:
 
     def _create_test_image(self, path: Path) -> None:
@@ -305,9 +326,11 @@ class TestMoveByMonth:
         handler = PicturesHandler(str(src), str(dst), dry_run=False, by_month=True)
         handler.handle()
         assert len(handler.moved) == 1
-        moved_dst = list(handler.moved.values())[0]
-        moved_path = Path(moved_dst)
-        assert moved_path.exists()
+        moved_entry = list(handler.moved.values())[0]
+        new_name = moved_entry['new_name']
+        found = list(dst.rglob(new_name))
+        assert len(found) == 1
+        moved_path = found[0]
         # Parent should be a 2-digit month folder, grandparent a 4-digit year folder
         assert re.match(r'^\d{2}$', moved_path.parent.name)
         assert re.match(r'^\d{4}$', moved_path.parent.parent.name)
@@ -322,8 +345,11 @@ class TestMoveByMonth:
         handler = PicturesHandler(str(src), str(dst), dry_run=False, by_month=False)
         handler.handle()
         assert len(handler.moved) == 1
-        moved_path = Path(list(handler.moved.values())[0])
-        assert re.match(r'^\d{4}$', moved_path.parent.name)
+        moved_entry = list(handler.moved.values())[0]
+        new_name = moved_entry['new_name']
+        found = list(dst.rglob(new_name))
+        assert len(found) == 1
+        assert re.match(r'^\d{4}$', found[0].parent.name)
 
 
 class TestHandleDestinationWithMonthFolders:

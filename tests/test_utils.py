@@ -52,10 +52,105 @@ class TestSaveDbFiles:
         assert loaded == new_data
 
 
+class TestIsOldDbFormat:
+
+    def test_old_format_detected(self) -> None:
+        old_db = {'C:/src/IMG_001.jpg': 'C:/dst/20200315_143022_000.jpg'}
+        assert utils.is_old_db_format(old_db) is True
+
+    def test_new_format_detected(self) -> None:
+        new_db = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 100}}
+        assert utils.is_old_db_format(new_db) is False
+
+    def test_empty_db_returns_false(self) -> None:
+        assert utils.is_old_db_format({}) is False
+
+
+class TestConvertDb:
+
+    def test_converts_old_to_new_format(self, tmp_path) -> None:
+        dst_file = tmp_path / '20200315_143022_000.jpg'
+        dst_file.write_text('photo data')
+        old_db = {'C:/src/IMG_001.jpg': str(dst_file)}
+        (tmp_path / 'files.txt').write_text(json.dumps(old_db))
+        logs: list[str] = []
+        result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=logs.append)
+        assert 'IMG_001.jpg' in result
+        entry = result['IMG_001.jpg']
+        assert entry['new_name'] == '20200315_143022_000.jpg'
+        assert entry['size'] == len('photo data')
+        # Verify file was saved
+        reloaded = json.loads((tmp_path / 'files.txt').read_text())
+        assert reloaded == result
+
+    def test_dry_run_does_not_save(self, tmp_path) -> None:
+        dst_file = tmp_path / '20200315_143022_000.jpg'
+        dst_file.write_text('photo data')
+        old_db = {'C:/src/IMG_001.jpg': str(dst_file)}
+        (tmp_path / 'files.txt').write_text(json.dumps(old_db))
+        original_text = (tmp_path / 'files.txt').read_text()
+        utils.convert_db(str(tmp_path), dry_run=True, logger_func=lambda x: None)
+        assert (tmp_path / 'files.txt').read_text() == original_text
+
+    def test_already_new_format_returns_as_is(self, tmp_path) -> None:
+        new_db = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 100}}
+        (tmp_path / 'files.txt').write_text(json.dumps(new_db))
+        logs: list[str] = []
+        result = utils.convert_db(str(tmp_path), dry_run=True, logger_func=logs.append)
+        assert result == new_db
+        assert any('already in new format' in log for log in logs)
+
+    def test_empty_db_returns_empty(self, tmp_path) -> None:
+        (tmp_path / 'files.txt').write_text('{}')
+        logs: list[str] = []
+        result = utils.convert_db(str(tmp_path), dry_run=True, logger_func=logs.append)
+        assert result == {}
+        assert any('empty' in log for log in logs)
+
+    def test_nonexistent_folder_returns_empty(self, tmp_path) -> None:
+        logs: list[str] = []
+        result = utils.convert_db(str(tmp_path / 'nope'), dry_run=True, logger_func=logs.append)
+        assert result == {}
+        assert any('does not exist' in log for log in logs)
+
+    def test_missing_file_sets_size_zero(self, tmp_path) -> None:
+        old_db = {'C:/src/IMG_001.jpg': 'C:/nonexistent/20200315_143022_000.jpg'}
+        (tmp_path / 'files.txt').write_text(json.dumps(old_db))
+        logs: list[str] = []
+        result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=logs.append)
+        assert result['IMG_001.jpg']['size'] == 0
+        assert any('not found' in log for log in logs)
+
+    def test_duplicate_source_names_warns(self, tmp_path) -> None:
+        dst1 = tmp_path / 'dst1.jpg'
+        dst2 = tmp_path / 'dst2.jpg'
+        dst1.write_text('a')
+        dst2.write_text('b')
+        old_db = {
+            'C:/folder1/photo.jpg': str(dst1),
+            'C:/folder2/photo.jpg': str(dst2),
+        }
+        (tmp_path / 'files.txt').write_text(json.dumps(old_db))
+        logs: list[str] = []
+        result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=logs.append)
+        assert 'photo.jpg' in result
+        assert any('duplicate source name' in log for log in logs)
+
+    def test_finds_file_by_rglob_when_full_path_missing(self, tmp_path) -> None:
+        sub = tmp_path / '2020'
+        sub.mkdir()
+        actual_file = sub / '20200315_143022_000.jpg'
+        actual_file.write_text('found by rglob')
+        old_db = {'C:/src/IMG.jpg': 'C:/gone/path/20200315_143022_000.jpg'}
+        (tmp_path / 'files.txt').write_text(json.dumps(old_db))
+        result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=lambda x: None)
+        assert result['IMG.jpg']['size'] == len('found by rglob')
+
+
 class TestSyncFolderAndDb:
 
     def test_dry_run_does_not_modify_db(self, tmp_path) -> None:
-        db_data = {'old/photo.jpg': str(tmp_path / 'missing.jpg')}
+        db_data = {'photo_src.jpg': {'new_name': 'missing.jpg', 'size': 100}}
         db_file = tmp_path / 'files.txt'
         db_file.write_text(json.dumps(db_data))
         logs: list[str] = []
@@ -66,34 +161,30 @@ class TestSyncFolderAndDb:
     def test_non_dry_run_removes_missing_from_db(self, tmp_path) -> None:
         present_file = tmp_path / 'present.jpg'
         present_file.write_text('data')
-        old_dir = tmp_path / 'old'
-        present_src_key = str(old_dir / 'present_src.jpg')
-        gone_src_key = str(old_dir / 'gone_src.jpg')
         db_data = {
-            present_src_key: str(tmp_path / 'present.jpg'),
-            gone_src_key: str(tmp_path / 'gone.jpg'),
+            'present_src.jpg': {'new_name': 'present.jpg', 'size': 4},
+            'gone_src.jpg': {'new_name': 'gone.jpg', 'size': 100},
         }
         db_file = tmp_path / 'files.txt'
         db_file.write_text(json.dumps(db_data))
         logs: list[str] = []
         utils.sync_folder_and_db(str(tmp_path), dry_run=False, logger_func=logs.append)
         reloaded = json.loads(db_file.read_text())
-        assert gone_src_key not in reloaded
-        assert present_src_key in reloaded
+        assert 'gone_src.jpg' not in reloaded
+        assert 'present_src.jpg' in reloaded
 
     def test_finds_files_in_subdirectories(self, tmp_path) -> None:
         sub = tmp_path / 'subdir'
         sub.mkdir()
         sub_file = sub / 'deep_photo.jpg'
         sub_file.write_text('deep data')
-        src_key = str(tmp_path / 'orig' / 'deep_photo_src.jpg')
-        db_data = {src_key: str(sub_file)}
+        db_data = {'deep_photo_src.jpg': {'new_name': 'deep_photo.jpg', 'size': 9}}
         db_file = tmp_path / 'files.txt'
         db_file.write_text(json.dumps(db_data))
         logs: list[str] = []
         utils.sync_folder_and_db(str(tmp_path), dry_run=False, logger_func=logs.append)
         reloaded = json.loads(db_file.read_text())
-        assert src_key in reloaded
+        assert 'deep_photo_src.jpg' in reloaded
 
 
 class TestOrganizeByYear:
@@ -119,17 +210,14 @@ class TestOrganizeByYear:
         assert (tmp_path / '2020' / '20200315_143022_000.jpg').exists()
         assert (tmp_path / '2021' / '20210601_080000_000.jpg').exists()
 
-    def test_updates_db_after_move(self, tmp_path) -> None:
+    def test_db_unchanged_after_organize(self, tmp_path) -> None:
         f1 = tmp_path / '20200315_143022_000.jpg'
         f1.write_text('photo data')
-        src_key = str(tmp_path / 'old' / 'IMG_001.jpg')
-        db_data = {src_key: str(f1)}
+        db_data = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 10}}
         (tmp_path / 'files.txt').write_text(json.dumps(db_data))
         utils.organize_by_year(str(tmp_path), dry_run=False, logger_func=lambda x: None)
         reloaded = json.loads((tmp_path / 'files.txt').read_text())
-        new_dst = reloaded[src_key]
-        assert '2020' in new_dst
-        assert new_dst.endswith('20200315_143022_000.jpg')
+        assert reloaded == db_data
 
     def test_skips_non_matching_files(self, tmp_path) -> None:
         f1 = tmp_path / 'random_notes.txt'
@@ -185,18 +273,14 @@ class TestOrganizeByMonth:
         assert not f1.exists()
         assert (tmp_path / '2020' / '03' / '20200315_143022_000.jpg').exists()
 
-    def test_updates_db_with_month_path(self, tmp_path) -> None:
+    def test_db_unchanged_after_month_organize(self, tmp_path) -> None:
         f1 = tmp_path / '20200315_143022_000.jpg'
         f1.write_text('photo')
-        src_key = str(tmp_path / 'old' / 'IMG_001.jpg')
-        db_data = {src_key: str(f1)}
+        db_data = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 5}}
         (tmp_path / 'files.txt').write_text(json.dumps(db_data))
         utils.organize_by_year(str(tmp_path), dry_run=False, by_month=True, logger_func=lambda x: None)
         reloaded = json.loads((tmp_path / 'files.txt').read_text())
-        new_dst = reloaded[src_key]
-        assert '2020' in new_dst
-        assert '03' in new_dst
-        assert new_dst.endswith('20200315_143022_000.jpg')
+        assert reloaded == db_data
 
 
 class TestGenerateDuplicateReport:
