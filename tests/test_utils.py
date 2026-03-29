@@ -59,7 +59,7 @@ class TestIsOldDbFormat:
         assert utils.is_old_db_format(old_db) is True
 
     def test_new_format_detected(self) -> None:
-        new_db = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 100}}
+        new_db = {'20200315_143022_000.jpg': {'source_name': 'IMG_001.jpg', 'size': 100}}
         assert utils.is_old_db_format(new_db) is False
 
     def test_empty_db_returns_false(self) -> None:
@@ -75,9 +75,9 @@ class TestConvertDb:
         (tmp_path / 'files.txt').write_text(json.dumps(old_db))
         logs: list[str] = []
         result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=logs.append)
-        assert 'IMG_001.jpg' in result
-        entry = result['IMG_001.jpg']
-        assert entry['new_name'] == '20200315_143022_000.jpg'
+        assert '20200315_143022_000.jpg' in result
+        entry = result['20200315_143022_000.jpg']
+        assert entry['source_name'] == 'IMG_001.jpg'
         assert entry['size'] == len('photo data')
         # Verify file was saved
         reloaded = json.loads((tmp_path / 'files.txt').read_text())
@@ -93,7 +93,7 @@ class TestConvertDb:
         assert (tmp_path / 'files.txt').read_text() == original_text
 
     def test_already_new_format_returns_as_is(self, tmp_path) -> None:
-        new_db = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 100}}
+        new_db = {'20200315_143022_000.jpg': {'source_name': 'IMG_001.jpg', 'size': 100}}
         (tmp_path / 'files.txt').write_text(json.dumps(new_db))
         logs: list[str] = []
         result = utils.convert_db(str(tmp_path), dry_run=True, logger_func=logs.append)
@@ -118,10 +118,10 @@ class TestConvertDb:
         (tmp_path / 'files.txt').write_text(json.dumps(old_db))
         logs: list[str] = []
         result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=logs.append)
-        assert result['IMG_001.jpg']['size'] == 0
+        assert result['20200315_143022_000.jpg']['size'] == 0
         assert any('not found' in log for log in logs)
 
-    def test_duplicate_source_names_warns(self, tmp_path) -> None:
+    def test_duplicate_source_names_both_kept(self, tmp_path) -> None:
         dst1 = tmp_path / 'dst1.jpg'
         dst2 = tmp_path / 'dst2.jpg'
         dst1.write_text('a')
@@ -133,8 +133,11 @@ class TestConvertDb:
         (tmp_path / 'files.txt').write_text(json.dumps(old_db))
         logs: list[str] = []
         result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=logs.append)
-        assert 'photo.jpg' in result
-        assert any('duplicate source name' in log for log in logs)
+        # Both entries kept since dest names (keys) are unique
+        assert 'dst1.jpg' in result
+        assert 'dst2.jpg' in result
+        assert result['dst1.jpg']['source_name'] == 'photo.jpg'
+        assert result['dst2.jpg']['source_name'] == 'photo.jpg'
 
     def test_finds_file_by_rglob_when_full_path_missing(self, tmp_path) -> None:
         sub = tmp_path / '2020'
@@ -144,13 +147,13 @@ class TestConvertDb:
         old_db = {'C:/src/IMG.jpg': 'C:/gone/path/20200315_143022_000.jpg'}
         (tmp_path / 'files.txt').write_text(json.dumps(old_db))
         result = utils.convert_db(str(tmp_path), dry_run=False, logger_func=lambda x: None)
-        assert result['IMG.jpg']['size'] == len('found by rglob')
+        assert result['20200315_143022_000.jpg']['size'] == len('found by rglob')
 
 
 class TestSyncFolderAndDb:
 
     def test_dry_run_does_not_modify_db(self, tmp_path) -> None:
-        db_data = {'photo_src.jpg': {'new_name': 'missing.jpg', 'size': 100}}
+        db_data = {'missing.jpg': {'source_name': 'photo_src.jpg', 'size': 100}}
         db_file = tmp_path / 'files.txt'
         db_file.write_text(json.dumps(db_data))
         logs: list[str] = []
@@ -162,29 +165,29 @@ class TestSyncFolderAndDb:
         present_file = tmp_path / 'present.jpg'
         present_file.write_text('data')
         db_data = {
-            'present_src.jpg': {'new_name': 'present.jpg', 'size': 4},
-            'gone_src.jpg': {'new_name': 'gone.jpg', 'size': 100},
+            'present.jpg': {'source_name': 'present_src.jpg', 'size': 4},
+            'gone.jpg': {'source_name': 'gone_src.jpg', 'size': 100},
         }
         db_file = tmp_path / 'files.txt'
         db_file.write_text(json.dumps(db_data))
         logs: list[str] = []
         utils.sync_folder_and_db(str(tmp_path), dry_run=False, logger_func=logs.append)
         reloaded = json.loads(db_file.read_text())
-        assert 'gone_src.jpg' not in reloaded
-        assert 'present_src.jpg' in reloaded
+        assert 'gone.jpg' not in reloaded
+        assert 'present.jpg' in reloaded
 
     def test_finds_files_in_subdirectories(self, tmp_path) -> None:
         sub = tmp_path / 'subdir'
         sub.mkdir()
         sub_file = sub / 'deep_photo.jpg'
         sub_file.write_text('deep data')
-        db_data = {'deep_photo_src.jpg': {'new_name': 'deep_photo.jpg', 'size': 9}}
+        db_data = {'deep_photo.jpg': {'source_name': 'deep_photo_src.jpg', 'size': 9}}
         db_file = tmp_path / 'files.txt'
         db_file.write_text(json.dumps(db_data))
         logs: list[str] = []
         utils.sync_folder_and_db(str(tmp_path), dry_run=False, logger_func=logs.append)
         reloaded = json.loads(db_file.read_text())
-        assert 'deep_photo_src.jpg' in reloaded
+        assert 'deep_photo.jpg' in reloaded
 
 
 class TestOrganizeByYear:
@@ -213,7 +216,7 @@ class TestOrganizeByYear:
     def test_db_unchanged_after_organize(self, tmp_path) -> None:
         f1 = tmp_path / '20200315_143022_000.jpg'
         f1.write_text('photo data')
-        db_data = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 10}}
+        db_data = {'20200315_143022_000.jpg': {'source_name': 'IMG_001.jpg', 'size': 10}}
         (tmp_path / 'files.txt').write_text(json.dumps(db_data))
         utils.organize_by_year(str(tmp_path), dry_run=False, logger_func=lambda x: None)
         reloaded = json.loads((tmp_path / 'files.txt').read_text())
@@ -276,7 +279,7 @@ class TestOrganizeByMonth:
     def test_db_unchanged_after_month_organize(self, tmp_path) -> None:
         f1 = tmp_path / '20200315_143022_000.jpg'
         f1.write_text('photo')
-        db_data = {'IMG_001.jpg': {'new_name': '20200315_143022_000.jpg', 'size': 5}}
+        db_data = {'20200315_143022_000.jpg': {'source_name': 'IMG_001.jpg', 'size': 5}}
         (tmp_path / 'files.txt').write_text(json.dumps(db_data))
         utils.organize_by_year(str(tmp_path), dry_run=False, by_month=True, logger_func=lambda x: None)
         reloaded = json.loads((tmp_path / 'files.txt').read_text())

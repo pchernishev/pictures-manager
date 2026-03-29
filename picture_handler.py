@@ -246,8 +246,8 @@ class PicturesHandler:
 
     def _load_db(self) -> None:
         self.db_files = utils.load_db_files(str(self.dst))
-        for src_name, entry in self.db_files.items():
-            self.all_handled_names += [src_name, entry['new_name']]
+        for new_name, entry in self.db_files.items():
+            self.all_handled_names += [entry['source_name'], new_name]
 
     def _delete_not_added(self) -> None:
         for f in self.not_passed_comparison:
@@ -474,8 +474,8 @@ class PicturesHandler:
                     self.unmoved[str(full_path)] = f'Exists {new_file_path}'
                     continue
                 move(str(full_path), str(new_file_path))
-                self.moved[f['file']] = {
-                    'new_name': new_file_path.name,
+                self.moved[new_file_path.name] = {
+                    'source_name': f['file'],
                     'size': f['size']
                 }
             except OSError as e:

@@ -186,7 +186,7 @@ class TestMoveFlow:
         assert not img_file.exists()
         assert len(handler.moved) == 1
         moved_entry = list(handler.moved.values())[0]
-        assert 'new_name' in moved_entry
+        assert 'source_name' in moved_entry
         assert 'size' in moved_entry
         assert moved_entry['size'] > 0
 
@@ -200,8 +200,7 @@ class TestMoveFlow:
         handler = PicturesHandler(str(src), str(dst), dry_run=False)
         handler.handle()
         assert len(handler.moved) == 1
-        moved_entry = list(handler.moved.values())[0]
-        new_name = moved_entry['new_name']
+        new_name = list(handler.moved.keys())[0]
         # Find the file on disk - should be in a year subfolder
         found = list(dst.rglob(new_name))
         assert len(found) == 1
@@ -326,8 +325,7 @@ class TestMoveByMonth:
         handler = PicturesHandler(str(src), str(dst), dry_run=False, by_month=True)
         handler.handle()
         assert len(handler.moved) == 1
-        moved_entry = list(handler.moved.values())[0]
-        new_name = moved_entry['new_name']
+        new_name = list(handler.moved.keys())[0]
         found = list(dst.rglob(new_name))
         assert len(found) == 1
         moved_path = found[0]
@@ -345,8 +343,7 @@ class TestMoveByMonth:
         handler = PicturesHandler(str(src), str(dst), dry_run=False, by_month=False)
         handler.handle()
         assert len(handler.moved) == 1
-        moved_entry = list(handler.moved.values())[0]
-        new_name = moved_entry['new_name']
+        new_name = list(handler.moved.keys())[0]
         found = list(dst.rglob(new_name))
         assert len(found) == 1
         assert re.match(r'^\d{4}$', found[0].parent.name)

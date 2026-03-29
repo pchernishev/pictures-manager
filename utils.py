@@ -56,7 +56,6 @@ def convert_db(folder: str, dry_run: bool = True,
         return db_files
 
     new_db: dict[str, dict] = {}
-    collisions = 0
     missing_files = 0
 
     for src_path, dst_path in db_files.items():
@@ -75,17 +74,12 @@ def convert_db(folder: str, dry_run: bool = True,
                 missing_files += 1
                 logger_func(f'Warning: file not found for size lookup: {dst_name}')
 
-        if src_name in new_db:
-            logger_func(f'Warning: duplicate source name "{src_name}", overwriting')
-            collisions += 1
-
-        new_db[src_name] = {
-            'new_name': dst_name,
+        new_db[dst_name] = {
+            'source_name': src_name,
             'size': size
         }
 
     logger_func(f'Converted {len(new_db)} entries'
-                f'{f" ({collisions} collisions)" if collisions else ""}'
                 f'{f" ({missing_files} files not found)" if missing_files else ""}')
 
     if not dry_run:
@@ -117,17 +111,11 @@ def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True
     logger_func(f'files in folder: {len(files_in_folder)}, sizes: {len(sizes)}')
     logger_func(f'files in DB: {len(files_in_db)}')
 
-    # Build mapping: new_name -> source_key for lookup
-    new_name_to_src: dict[str, str] = {}
-    for src_name, entry in files_in_db.items():
-        new_name = entry['new_name']
-        new_name_to_src[new_name] = src_name
-
-    db_new_names = set(new_name_to_src.keys())
+    db_names = set(files_in_db.keys())
     folder_names = set(files_in_folder.keys())
 
-    missing_in_folder = sorted(db_new_names - folder_names)
-    missing_in_db = sorted(folder_names - db_new_names)
+    missing_in_folder = sorted(db_names - folder_names)
+    missing_in_db = sorted(folder_names - db_names)
 
     def output_missing_files() -> None:
         logger_func(f'Number of missing_in_folder: {len(missing_in_folder)}')
@@ -143,9 +131,8 @@ def sync_folder_and_db(folder: str, recursive: bool = True, dry_run: bool = True
     if dry_run:
         return
 
-    for new_name in missing_in_folder:
-        src_key = new_name_to_src[new_name]
-        del files_in_db[src_key]
+    for name in missing_in_folder:
+        del files_in_db[name]
 
     save_db_files(files_in_db, folder)
 
@@ -604,11 +591,11 @@ def move_files(folder: str, new_folder: str, regex_pattern: str = r'.*\.\w{2,4}'
 
     print(regex_pattern)
     regex = re.compile(regex_pattern)
-    for source_name, entry in db_files.items():
+    for new_name, entry in db_files.items():
+        source_name = entry['source_name']
         if regex.match(source_name):
-            new_name = entry['new_name']
-            new_folder_db_files[source_name] = entry
-            del old_folder_db_files[source_name]
+            new_folder_db_files[new_name] = entry
+            del old_folder_db_files[new_name]
             if not dry_run:
                 current_path = file_lookup.get(new_name)
                 if current_path:
